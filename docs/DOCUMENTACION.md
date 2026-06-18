@@ -29,6 +29,10 @@ y en los módulos de Python que lo soportan.
 11. [Decisiones de diseño y justificación](#11-decisiones-de-diseño-y-justificación)
 12. [Mapeo con la rúbrica de evaluación](#12-mapeo-con-la-rúbrica-de-evaluación)
 13. [Glosario de términos](#13-glosario-de-términos)
+14. [Preguntas resueltas a fondo (FAQ técnica)](#14-preguntas-resueltas-a-fondo-faq-técnica)
+15. [Cambios recientes: años dinámicos, Fuente 2 en vivo y rediseño](#15-cambios-recientes-años-dinámicos-fuente-2-en-vivo-y-rediseño)
+16. [Conceptos clave explicados a fondo](#16-conceptos-clave-explicados-a-fondo)
+17. [Diseño visual del dashboard (tema, tipografías, animaciones)](#17-diseño-visual-del-dashboard-tema-tipografías-animaciones)
 
 ---
 
@@ -126,14 +130,29 @@ streamlit run dashboard/app.py
 # Se abre en el navegador, normalmente en http://localhost:8501
 ```
 
-### 3.4 (Opcional) Activar el chatbot con Claude
+### 3.4 Chatbot con IA generativa
 
-El chatbot funciona **sin clave** (modo extractivo). Para que use el modelo de IA
-Claude y redacte respuestas más naturales:
+El chatbot funciona **sin instalar nada extra** (modo extractivo). Para respuestas
+redactadas por una IA, hay dos opciones:
+
+**Opción A — Ollama (GRATIS, recomendada).** IA que corre en tu computadora, sin
+clave y sin costo:
+
+```bash
+# 1) Instala Ollama desde https://ollama.com/download
+# 2) Descarga un modelo (una sola vez):
+ollama pull llama3.2
+# 3) Corre el dashboard: el chatbot detecta Ollama automáticamente.
+```
+
+**Opción B — Claude (en la nube, de pago).** Si prefieres usar Anthropic:
 
 ```bash
 export ANTHROPIC_API_KEY="tu-clave-de-anthropic"   # Windows: set ANTHROPIC_API_KEY=...
 ```
+
+> El motor se elige solo (`auto`): primero Ollama (gratis), luego Claude (si hay
+> clave), luego extractivo. Puedes forzarlo con `export CHATBOT_PROVEEDOR=ollama`.
 
 > **Reproducibilidad sin internet.** Si la API del Banco Mundial no está
 > disponible, el pipeline usa automáticamente datos de respaldo representativos,
@@ -517,36 +536,55 @@ self.matriz = self.vectorizador.fit_transform(self.textos)
   la **similitud de coseno** (`cosine_similarity`) contra todos los documentos y
   devuelve los `k=5` más parecidos (con su puntaje).
 
-### 9.4 Generación (generation)
+### 9.4 Generación (generation) — 3 motores
+
+El chatbot puede generar la respuesta con **tres motores**, en este orden de
+preferencia (modo `"auto"`):
+
+| Motor | Costo | Requiere | Cuándo se usa |
+|-------|-------|----------|---------------|
+| **Ollama** 🟢 | **Gratis** | App Ollama corriendo localmente | Recomendado. IA local, sin clave, sin límites, offline. |
+| **Claude** ☁️ | De pago | `ANTHROPIC_API_KEY` | Si defines la clave de Anthropic. |
+| **Extractivo** 📄 | Gratis | Nada | Respaldo: si no hay ninguno de los anteriores. |
 
 **`responder(pregunta)`** orquesta:
 
-1. Recupera el contexto.
-2. Si hay cliente de Claude → **`_generar_con_claude`**: arma un *prompt* con un
-   **system prompt** (instruye a responder solo con el contexto, en español, sin
-   inventar) y la pregunta + contexto, y llama a:
-   ```python
-   self.cliente_claude.messages.create(
-       model="claude-opus-4-8", max_tokens=1024,
-       system=sistema, messages=[{"role": "user", "content": prompt}],
-   )
-   ```
-   Extrae el texto de los bloques de contenido de la respuesta.
-3. Si **no** hay clave o la llamada falla → **`_generar_extractivo`**: arma la
-   respuesta listando los fragmentos recuperados. Garantiza que el chatbot
-   **funcione siempre**.
+1. Recupera el contexto con TF-IDF.
+2. Según `self.proveedor` (resuelto por `_resolver_proveedor`):
+   - `"ollama"` → **`_generar_con_ollama`**: hace una petición HTTP al servidor
+     local de Ollama (`http://localhost:11434/api/chat`) con el sistema + el
+     prompt; solo usa `requests`, sin librerías extra.
+   - `"claude"` → **`_generar_con_claude`**: llama a `claude-opus-4-8` vía el SDK
+     de Anthropic.
+   - `"extractivo"` → **`_generar_extractivo`**: arma la respuesta con los
+     fragmentos recuperados.
+3. Si el motor elegido falla, **cae al modo extractivo** para responder siempre.
 
-Devuelve `{'respuesta', 'fuentes', 'modo'}` donde `modo` ∈ {`claude`, `extractivo`}.
+El *system prompt* y el *prompt* son comunes a Ollama y Claude (los arma
+`_construir_prompt`): instruyen a responder solo con el contexto, en español y sin
+inventar cifras.
 
-### 9.5 Detección de la clave
+Devuelve `{'respuesta', 'fuentes', 'modo'}` con `modo` ∈ {`ollama`, `claude`, `extractivo`}.
 
-`_crear_cliente_claude()` revisa la variable de entorno `ANTHROPIC_API_KEY`. Si
-existe y el SDK `anthropic` está instalado, crea el cliente; si no, devuelve
-`None` y el chatbot opera en modo extractivo.
+### 9.5 Selección automática del motor
 
-> **Sobre el modelo de IA.** Se usa `claude-opus-4-8` (el modelo Claude Opus 4.8
-> más reciente) por defecto, vía el SDK oficial de Anthropic. Es configurable en
-> `config.MODELO_CLAUDE`. El proyecto no requiere costo para funcionar gracias al
+`_resolver_proveedor()` decide qué motor usar según `config.PROVEEDOR_LLM` (que se
+puede fijar con la variable de entorno `CHATBOT_PROVEEDOR`):
+
+- `"auto"` (por defecto) → usa **Ollama si está corriendo** (lo verifica
+  `_ollama_disponible()` con una petición rápida a `/api/tags`); si no, **Claude**
+  si hay clave; si no, **extractivo**.
+- `"ollama"` / `"claude"` / `"extractivo"` → fuerzan ese motor.
+
+El método `proveedor_activo()` devuelve el motor en uso (el dashboard lo muestra).
+
+**Parámetros de Ollama** (en `config.py`, configurables por variable de entorno):
+`OLLAMA_HOST` (`http://localhost:11434`), `OLLAMA_MODELO` (`llama3.2`),
+`OLLAMA_TIMEOUT` (120 s).
+
+> **Sobre el modelo de IA.** Por defecto el modo `auto` prioriza **Ollama** (IA
+> gratis y local). Claude (`claude-opus-4-8`) queda como alternativa si defines
+> `ANTHROPIC_API_KEY`. El proyecto no requiere costo para funcionar gracias al
 > modo extractivo de respaldo.
 
 ---
@@ -712,6 +750,437 @@ los hallazgos y listan las fuentes y librerías.
 - **Similitud de coseno:** medida de qué tan parecidos son dos vectores (1 = iguales).
 - **Alucinación (LLM):** cuando un modelo de lenguaje inventa información falsa.
 - **KPI:** *Key Performance Indicator*, indicador clave que se muestra destacado.
+
+---
+
+## 14. Preguntas resueltas a fondo (FAQ técnica)
+
+Esta sección responde, con calma y detalle, dudas concretas sobre cómo funciona el
+proyecto por dentro.
+
+### 14.1 Si todo está en un mismo DataFrame, ¿cómo se sabe qué (año, valor) pertenece a cada indicador? ¿Cuáles son las columnas exactas? ¿Por qué un solo DataFrame y no uno por indicador?
+
+**Las columnas exactas del DataFrame "largo" (tidy) son cuatro:**
+
+| Columna | Tipo | Qué contiene | Ejemplo |
+|---------|------|--------------|---------|
+| `anio` | entero | El año de la observación | `2020` |
+| `codigo` | texto | **El identificador del indicador** | `"desempleo"` |
+| `valor` | decimal | El valor numérico de ese indicador en ese año | `18.5` |
+| `fuente` | texto | De dónde vino el dato | `"Banco Mundial"` |
+
+**La clave de tu pregunta es la columna `codigo`.** El indicador NO se pierde al
+mezclar todo: cada fila lleva su propia etiqueta de indicador en la columna
+`codigo`. Una fila como:
+
+```
+anio=2020,  codigo="desempleo",  valor=18.5,  fuente="Banco Mundial"
+```
+
+se lee así: *"en el año 2020, el indicador 'tasa de desempleo' valía 18.5, según
+el Banco Mundial"*. Aunque haya 9 indicadores y 26 años mezclados en la misma
+tabla (≈231 filas), cada fila es **autodescriptiva**: el par (`anio`, `valor`)
+siempre viene acompañado de su `codigo`. Para quedarte solo con un indicador
+basta con filtrar: `df[df["codigo"] == "desempleo"]`.
+
+**¿Por qué un solo DataFrame y no uno por indicador?** Por el principio de
+**datos ordenados (*tidy data*)**: *cada variable es una columna, cada observación
+es una fila*. Esto trae ventajas concretas:
+
+1. **Unir las 2 fuentes es trivial.** El Banco Mundial y la Contraloría producen
+   exactamente el mismo esquema de 4 columnas, así que combinarlos es solo
+   "apilar" con `pd.concat(...)`. Con 9 DataFrames separados tendrías que manejar
+   9 estructuras y una lógica de unión mucho más complicada.
+2. **Operaciones globales fáciles.** Contar observaciones por fuente
+   (`groupby("fuente")`), filtrar por rango de años, etc., se hace en una línea.
+3. **Es el formato estándar de intercambio.** Cuando un análisis o gráfica necesita
+   los indicadores como columnas separadas, *pivoteamos* a formato ancho (ver
+   14.6). Es decir: guardamos en largo, y transformamos a ancho solo cuando hace
+   falta. Lo mejor de ambos mundos.
+
+> **Analogía:** un solo libro de contabilidad con una columna "concepto" es más
+> manejable que 9 libretas sueltas, una por concepto.
+
+### 14.2 ¿Por qué se trabaja de 2000 a 2024 si estamos en 2026? ¿Se puede usar datos más actuales?
+
+**Sí, y ya se cambió para que sea automático.**
+
+- **Por qué empieza en 2000:** la cobertura de datos del Banco Mundial para Panamá
+  es completa y consistente desde el año 2000. Además, 25+ años son suficientes
+  para ver tendencias y entrenar los modelos, sin arrastrar datos antiguos y
+  dispersos.
+- **Por qué antes terminaba en 2024:** ese valor estaba *fijo* (escrito a mano) y
+  correspondía al último año completo cuando se construyó el proyecto.
+- **El cambio (ya implementado):** ahora `config.ANIO_FIN` se calcula solo con la
+  fecha del sistema:
+  ```python
+  ANIO_FIN: int = datetime.now().year   # en 2026 vale 2026
+  ```
+  Así el pipeline **pide siempre los datos más recientes posibles**.
+
+> **Matiz importante (y honesto):** el año final *efectivo* de los datos depende de
+> la **disponibilidad en la fuente**. El Banco Mundial publica sus indicadores con
+> **1–2 años de rezago**, así que el último año con dato real suele ser el año
+> actual menos 1 o 2. Si pides hasta 2026 pero la fuente solo tiene hasta 2025, el
+> dataset llegará hasta 2025. Para el año más reciente que aún no se publica, el
+> relleno hacia adelante (ver 14.9) copia el último valor conocido; eso es una
+> aproximación, no un dato medido, y se documenta como tal.
+
+Para cambiar el año inicial, edita `config.ANIO_INICIO`.
+
+### 14.3 ¿Por qué no se descarga el CSV de la Fuente 2 en tiempo real? (ahora sí se puede)
+
+**Antes** los datos de la Contraloría/INEC/ACP eran *representativos* (basados en
+cifras públicas reales) porque, a diferencia del Banco Mundial, **la Contraloría no
+publica una API ni un CSV en una URL fija y estable** para estas series: su
+información vive en PDFs, tablas HTML y descargas del portal, que son difíciles de
+automatizar de forma confiable.
+
+**El cambio (ya implementado):** se añadió un "gancho" para descarga en vivo.
+`cargar_contraloria()` ahora hace lo siguiente:
+
+1. Si la variable `config.CONTRALORIA_URL` está definida (por la variable de
+   entorno `CONTRALORIA_URL`), **intenta descargar el CSV en tiempo real** desde
+   esa URL.
+2. Si no hay URL, o la descarga falla, **usa el CSV local representativo como
+   respaldo** — exactamente como pediste: la descarga en vivo es lo primario y los
+   datos locales quedan como red de seguridad.
+
+**Cómo activarlo** cuando consigas (o publiques) una URL real:
+
+```bash
+export CONTRALORIA_URL="https://.../datos_contraloria.csv"
+```
+
+El CSV remoto debe tener una columna `anio` y una columna por indicador
+(`canal_transitos`, `canal_ingresos`, `imae`). Si algún día consigues un enlace
+oficial, el proyecto lo usará automáticamente y esos datos dejarán de ser
+representativos. (Una alternativa es hacer *web scraping* del portal, pero es más
+frágil y por eso no es la opción por defecto.)
+
+### 14.4 ¿A qué 2 funciones llama exactamente `ingestar_todo()`?
+
+`ingestar_todo()` llama, en este orden, a:
+
+1. **`descargar_banco_mundial()`** → Fuente 1 (API del Banco Mundial).
+2. **`cargar_contraloria()`** → Fuente 2 (Contraloría/INEC/ACP: en vivo o local).
+
+Luego une ambos resultados con `pd.concat([fuente1, fuente2])` y devuelve el
+DataFrame combinado en formato largo. En pseudocódigo:
+
+```python
+def ingestar_todo():
+    fuente1 = descargar_banco_mundial()   # 1) Banco Mundial (API)
+    fuente2 = cargar_contraloria()        # 2) Contraloría/INEC (CSV)
+    return pd.concat([fuente1, fuente2], ignore_index=True)
+```
+
+### 14.5 ¿Qué significa `errors="coerce"`?
+
+Aparece en `pd.to_numeric(serie, errors="coerce")`. La función intenta convertir
+cada valor de la columna a número. El parámetro `errors` decide qué hacer cuando un
+valor **no se puede convertir** (por ejemplo, el texto `"n/d"`, `"-"` o una celda
+vacía):
+
+| Valor de `errors` | Comportamiento ante un valor no convertible |
+|-------------------|---------------------------------------------|
+| `"raise"` (por defecto) | **Lanza un error** y detiene el programa. |
+| `"coerce"` | **Lo reemplaza por `NaN`** (Not a Number) y sigue. |
+| `"ignore"` | Deja el valor original tal cual (no recomendado). |
+
+Usamos `"coerce"` (que significa "forzar") para que **un solo dato corrupto no
+rompa todo el pipeline**: el valor problemático se vuelve `NaN`, y más adelante se
+imputa con interpolación/relleno (ver 14.8 y 14.9). Es una decisión de robustez.
+
+### 14.6 ¿Qué significa "pivotear en formato ancho"?
+
+"Pivotear" es **girar** los datos de filas a columnas. Convertimos el formato
+**largo** (una fila por cada combinación año-indicador) en formato **ancho** (una
+fila por año, y una columna por indicador):
+
+**Largo (antes):**
+| anio | codigo | valor |
+|------|--------|-------|
+| 2020 | pib_crecimiento | -17.9 |
+| 2020 | inflacion | -1.6 |
+| 2020 | desempleo | 18.5 |
+| 2021 | pib_crecimiento | 15.8 |
+
+**Ancho (después):**
+| anio | pib_crecimiento | inflacion | desempleo |
+|------|-----------------|-----------|-----------|
+| 2020 | -17.9 | -1.6 | 18.5 |
+| 2021 | 15.8 | … | … |
+
+Lo hace `a_formato_ancho()` con
+`pivot_table(index="anio", columns="codigo", values="valor")`. **¿Por qué?** Los
+modelos de Machine Learning y muchas gráficas esperan que **cada indicador sea su
+propia columna** (una "característica"/*feature*). En formato ancho, "el desempleo
+de cada año" es simplemente la columna `desempleo`.
+
+### 14.7 ¿De dónde nace el `columns="codigo"`?
+
+En `pivot_table(index="anio", columns="codigo", values="valor")`, el argumento
+`columns="codigo"` le dice a pandas: **"toma los valores distintos de la columna
+`codigo` y conviértelos en los nombres de las nuevas columnas"**.
+
+- `"codigo"` es **el nombre de la columna del DataFrame largo** que guarda el
+  identificador del indicador (la creamos en la ingesta: ver 14.1).
+- Como `codigo` contiene `pib_crecimiento`, `inflacion`, `desempleo`, … cada uno de
+  esos valores únicos **se convierte en una columna** del DataFrame ancho.
+
+En resumen, los tres argumentos de `pivot_table` significan:
+- `index="anio"` → cada año será una fila.
+- `columns="codigo"` → cada indicador (valor único de `codigo`) será una columna.
+- `values="valor"` → el contenido de cada celda será el número de la columna `valor`.
+
+### 14.8 ¿Qué es la interpolación lineal en el tiempo? ¿Qué tan precisa y confiable es?
+
+**Qué es:** cuando falta un valor *entre* dos años conocidos, la interpolación
+lineal lo estima trazando una **línea recta** entre el vecino anterior y el
+posterior, y leyendo el punto intermedio. Fórmula: si el año `t₁` vale `v₁` y el
+año `t₃` vale `v₃`, y falta `t₂` (entre ambos):
+
+```
+v₂ = v₁ + (v₃ − v₁) × (t₂ − t₁) / (t₃ − t₁)
+```
+
+Ejemplo: si 2018 = 100 y 2020 = 120, y falta 2019, la interpolación estima
+2019 = 110 (el punto medio de la recta).
+
+**¿Qué tan precisa/confiable es?** Es una **estimación, no una medición**. Su
+fiabilidad depende de dos cosas:
+
+- ✅ **Funciona bien** cuando la variable cambia de forma suave y el hueco es
+  pequeño (1–2 años). El error suele ser bajo.
+- ❌ **Funciona mal** cuando en el hueco ocurrió un *choque* o cambio brusco. Por
+  ejemplo, interpolar "a través" de 2020 daría un valor intermedio que **se
+  perdería el desplome del COVID-19** (−17.9 %). La línea recta no sabe de crisis.
+
+**En este proyecto** la interpolación casi no se activa, porque la cobertura de
+datos es buena y hay pocos o ningún hueco interno. La usamos solo como **red de
+seguridad**, y todo valor interpolado debe entenderse como aproximado. Siempre se
+prefiere el dato real; por eso se documenta cuándo un valor fue imputado.
+
+### 14.9 Relleno hacia adelante y hacia atrás: ¿qué significa "cubrir los extremos"?
+
+La interpolación (14.8) solo rellena huecos que están **entre** dos valores
+conocidos. No puede rellenar un hueco que esté **al principio** de la serie (no hay
+vecino anterior) ni **al final** (no hay vecino posterior). Esos primeros/últimos
+años faltantes son **"los extremos"**.
+
+Para cubrirlos usamos:
+
+- **Relleno hacia adelante (`ffill`, *forward fill*):** copia el último valor
+  conocido **hacia adelante**. Sirve para huecos al final. Ejemplo: si 2025 aún no
+  tiene PIB publicado, `ffill` copia el valor de 2024 en 2025.
+- **Relleno hacia atrás (`bfill`, *backward fill*):** copia el siguiente valor
+  conocido **hacia atrás**. Sirve para huecos al inicio.
+
+Visualmente, sobre una serie `[NaN, NaN, 100, 110, NaN]`:
+
+```
+original:   [NaN, NaN, 100, 110, NaN]
+interpola:  [NaN, NaN, 100, 110, NaN]   (no toca los extremos)
+ffill:      [NaN, NaN, 100, 110, 110]   (copia 110 al final)
+bfill:      [100, 100, 100, 110, 110]   (copia 100 al inicio)
+```
+
+> **Cuidado (mismo matiz que 14.2):** rellenar el último año con el valor del
+> anterior asume "sin cambios", lo cual es una simplificación. Por eso el año más
+> reciente puede contener algún valor repetido si la fuente todavía no lo publicó.
+
+---
+
+## 15. Cambios recientes: años dinámicos, Fuente 2 en vivo y rediseño
+
+Resumen de las mejoras incorporadas después de la primera versión.
+
+### 15.1 Años dinámicos
+`config.ANIO_FIN` pasó de un valor fijo (`2024`) a **`datetime.now().year`**. El
+pipeline ahora solicita datos hasta el año actual; el año final efectivo depende de
+la disponibilidad en la fuente (ver 14.2). Esto permite trabajar con datos más
+actualizados sin tocar el código cada año.
+
+### 15.2 Fuente 2 con descarga en tiempo real + respaldo
+`cargar_contraloria()` intenta descargar un CSV en vivo desde `config.CONTRALORIA_URL`
+(si está definida) y cae al CSV local representativo si no hay URL o la descarga
+falla (ver 14.3). Se añadió la función auxiliar `_descargar_contraloria_url()`.
+
+### 15.3 Chatbot gratis con Ollama
+La generación del chatbot ahora soporta **3 motores** (Ollama local gratis →
+Claude → extractivo), elegidos automáticamente. Detalle completo en la
+[sección 9](#9-módulo-5--chatbot-con-rag-chatbotpy).
+
+### 15.4 Rediseño visual del dashboard
+El dashboard pasó a un **tema oscuro azul marino profesional**, con tipografías
+personalizadas, sin emojis, con tarjetas, contrastes y animaciones. Detalle en la
+[sección 17](#17-diseño-visual-del-dashboard-tema-tipografías-animaciones).
+
+### 15.5 Scripts de un comando y guía rápida
+Se añadió la carpeta `scripts/` (`instalar.sh`, `dashboard.sh`, `notebook.sh`,
+`chatbot.sh`, `preparar_ollama.sh`) y la guía
+[`docs/GUIA_RAPIDA.md`](GUIA_RAPIDA.md) para correr todo desde la terminal.
+
+---
+
+## 16. Conceptos clave explicados a fondo
+
+Profundización de las técnicas usadas, al mismo nivel de detalle que la FAQ.
+
+### 16.1 La respuesta JSON de la API del Banco Mundial
+
+Cuando pedimos un indicador, la API responde con una **lista de 2 elementos**:
+
+```json
+[
+  { "page": 1, "pages": 1, "per_page": 500, "total": 25 },   // [0] metadatos
+  [                                                          // [1] observaciones
+    { "indicator": {...}, "country": {...}, "date": "2020", "value": -17.9 },
+    { "indicator": {...}, "country": {...}, "date": "2021", "value": 15.8 },
+    ...
+  ]
+]
+```
+
+- El elemento `[0]` son **metadatos de paginación** (cuántas páginas, cuántos
+  registros). No nos interesan para los valores.
+- El elemento `[1]` es la **lista de observaciones**; de cada una tomamos `date`
+  (el año) y `value` (el valor, que puede ser `null` para años sin dato).
+
+Por eso en el código validamos `if len(contenido) < 2 ...` y leemos `contenido[1]`.
+Construimos un DataFrame `[anio, valor]` y descartamos lo demás.
+
+### 16.2 `melt`: la operación inversa de `pivot`
+
+Si `pivot` convierte de largo a ancho, **`melt` convierte de ancho a largo**. Lo
+usamos en dos lugares:
+
+- En `cargar_contraloria()`: el CSV viene ancho (una columna por indicador) y lo
+  pasamos a largo con `melt(id_vars="anio", var_name="codigo", value_name="valor")`
+  para unificarlo con el Banco Mundial.
+- En el dashboard y el notebook: para graficar varios indicadores juntos.
+
+`id_vars="anio"` indica la columna que se queda fija; las demás columnas se
+"derriten" en dos: una con el nombre del indicador (`codigo`) y otra con el valor.
+
+### 16.3 TF-IDF y similitud de coseno (recuperación del chatbot)
+
+- **TF-IDF** = *Term Frequency × Inverse Document Frequency*. Convierte cada
+  documento en un vector de números. Cada palabra recibe un peso:
+  - **TF** (frecuencia del término): cuántas veces aparece la palabra en *ese*
+    documento. Más apariciones → más peso.
+  - **IDF** (frecuencia inversa en documentos): qué tan rara es la palabra en
+    *todo* el conjunto. Una palabra que sale en casi todos los documentos (p. ej.
+    "panamá") aporta poco y recibe peso bajo; una palabra rara y específica (p. ej.
+    "deflación") recibe peso alto.
+  - El peso final es `TF × IDF`: alto para palabras frecuentes-en-el-documento pero
+    raras-en-general (las más informativas).
+- **Similitud de coseno:** mide el ángulo entre el vector de la pregunta y el de
+  cada documento. Va de 0 (nada en común) a 1 (idénticos). Se calcula como el
+  producto punto de los vectores dividido entre el producto de sus magnitudes.
+  Recuperamos los documentos con mayor coseno (los más parecidos a la pregunta).
+
+### 16.4 Regresión con rezagos y pronóstico recursivo
+
+El modelo de pronóstico es una **regresión lineal** cuyas variables predictoras
+son el año (tendencia) y los **rezagos** del propio indicador (`lag1`, `lag2`):
+es un modelo **autorregresivo con tendencia**, AR(2) + tendencia. Predice el valor
+de un año a partir del año y de los 2 valores anteriores.
+
+- **Por qué regresión lineal y no Random Forest para pronosticar:** la lineal
+  **extrapola** (puede continuar una tendencia hacia años futuros que nunca vio);
+  Random Forest no extrapola (predeciría una línea plana fuera del rango de
+  entrenamiento). Por eso para *pronosticar* usamos la lineal.
+- **Pronóstico recursivo:** para predecir 2026 necesitamos los valores de 2025 y
+  2024 como rezagos. Como 2025 podría ser una predicción, la usamos como entrada
+  para predecir 2026, y así sucesivamente: cada predicción alimenta la siguiente.
+
+### 16.5 Partición temporal y métricas
+
+- **Partición temporal:** en series de tiempo entrenamos con el pasado y probamos
+  con el futuro (los últimos 5 años). Usar una partición *aleatoria* sería trampa:
+  el modelo "vería" años futuros al entrenar.
+- **Métricas:**
+  - **MAE** (Error Absoluto Medio): promedio de |real − predicho|. En las mismas
+    unidades del indicador. Fácil de interpretar.
+  - **RMSE** (Raíz del Error Cuadrático Medio): similar, pero eleva al cuadrado los
+    errores antes de promediar (penaliza más los errores grandes) y luego saca la
+    raíz.
+  - **R²** (coeficiente de determinación): qué porción de la variación explica el
+    modelo. 1 = perfecto; 0 = no mejora a "predecir siempre el promedio"; **negativo
+    = peor que el promedio** (lo cual puede pasar en series muy ruidosas como la
+    inflación, y se reporta con honestidad).
+
+### 16.6 KMeans y coeficiente de silueta
+
+- **KMeans** agrupa los años en `k` grupos (clústeres). Funciona así: coloca `k`
+  centros, asigna cada año al centro más cercano, recalcula los centros como el
+  promedio de su grupo, y repite hasta que se estabiliza. `random_state=42` y
+  `n_init=10` hacen el resultado reproducible.
+- **Estandarización previa:** antes de KMeans estandarizamos las variables
+  (restamos la media y dividimos por la desviación) para que todas pesen igual; si
+  no, el IMAE (en cientos) dominaría sobre el crecimiento (en unidades).
+- **Coeficiente de silueta:** mide qué tan bien separados quedan los grupos, de −1
+  a +1. Para cada punto compara su distancia media a su propio grupo con la
+  distancia al grupo vecino más cercano. Cerca de +1 = bien agrupado; cerca de 0 =
+  en la frontera; negativo = probablemente mal asignado.
+
+---
+
+## 17. Diseño visual del dashboard (tema, tipografías, animaciones)
+
+El dashboard usa un **tema oscuro azul marino profesional**, sin emojis, con
+contrastes y animaciones. Cómo está construido:
+
+### 17.1 Paleta de colores
+Definida como constantes en `dashboard/app.py`:
+
+| Rol | Color | Uso |
+|-----|-------|-----|
+| Fondo | `#071a2f` | Azul marino profundo (con degradado sutil) |
+| Tarjetas | `#0c2340` | Superficies de KPIs, gráficas, barra lateral |
+| Acento primario | `#38bdf8` | Azul cielo: bordes activos, líneas, énfasis |
+| Acento secundario | `#f5b841` | Ámbar: pronóstico, contraste cálido |
+| Verde / Rojo | `#34d399` / `#f87171` | Variación positiva / negativa |
+
+El tema base (oscuro) también se fija en `.streamlit/config.toml`.
+
+### 17.2 Tipografías
+Se importan de Google Fonts por CSS (no se usa la fuente genérica por defecto):
+
+- **Space Grotesk** → títulos y encabezados (aspecto técnico, moderno).
+- **IBM Plex Sans** → texto general (diseñada por IBM, muy legible y profesional).
+- **IBM Plex Mono** → números de los KPIs y métricas (estética de "panel de datos").
+
+### 17.3 Animaciones y efectos
+Definidas con CSS `@keyframes` e inyectadas con `st.markdown(..., unsafe_allow_html=True)`:
+
+- **`subir`**: las tarjetas y secciones aparecen con un fundido y un leve
+  desplazamiento hacia arriba al cargar.
+- **Hover en KPIs**: al pasar el cursor, la tarjeta se eleva (`translateY(-5px)`) y
+  muestra un resplandor azul (sombra + borde de acento).
+- **Hover en botones y pestañas**: transiciones suaves de color y elevación.
+- **Barra de acento degradada** en el encabezado (azul → ámbar).
+- **Barra de scroll** personalizada en azul.
+
+### 17.4 Componentes a medida
+- **Encabezado "hero"**: bloque HTML con título, subtítulo, barra de acento y
+  "chips" informativos.
+- **Tarjetas KPI**: se generan como HTML propio (clase `.kpi`) en lugar de usar el
+  `st.metric` por defecto, para controlar exactamente la tipografía monoespaciada,
+  el color de la variación (verde/rojo) y la animación. La variación usa
+  triángulos `▲`/`▼` (caracteres geométricos, **no emojis**).
+- **Gráficas Plotly**: la función `estilizar_fig()` aplica a cada figura el tema
+  `plotly_dark`, fondos transparentes, la paleta del proyecto y tipografía clara,
+  para que combinen con el fondo azul marino.
+- **Caja de respuesta del asistente**: bloque con borde de acento y animación de
+  aparición.
+
+> **Nota de mantenimiento:** si editas el código del chatbot o del dashboard y
+> tienes el servidor abierto, **reinícialo** (Ctrl+C y de nuevo `streamlit run …`),
+> porque `@st.cache_resource`/`@st.cache_data` conservan en memoria los objetos
+> creados con el código anterior.
 
 ---
 

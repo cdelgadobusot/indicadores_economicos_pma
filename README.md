@@ -63,6 +63,19 @@ parcial2/
 
 ## 🚀 Instalación y uso
 
+> 📄 Guía exacta paso a paso: [`docs/GUIA_RAPIDA.md`](docs/GUIA_RAPIDA.md)
+
+**Forma fácil (con scripts):**
+
+```bash
+bash scripts/instalar.sh          # 1.ª vez: crea el entorno e instala todo
+bash scripts/preparar_ollama.sh   # 1.ª vez: prepara el chatbot gratis (Ollama)
+bash scripts/dashboard.sh         # abre el dashboard en http://localhost:8501
+# Otros:  bash scripts/notebook.sh   ·   bash scripts/chatbot.sh
+```
+
+**Forma manual:**
+
 ```bash
 # 1) Clonar e instalar
 git clone <url-del-repositorio>
@@ -77,10 +90,19 @@ jupyter notebook notebooks/proyecto_indicadores_economicos.ipynb
 streamlit run dashboard/app.py        # abre http://localhost:8501
 ```
 
-### 💬 (Opcional) Activar el chatbot con Claude
+### 💬 Chatbot con IA generativa (gratis)
 
-El chatbot funciona **sin clave** (modo extractivo). Para respuestas redactadas por
-la IA:
+El chatbot funciona sin instalar nada (modo extractivo). Para respuestas redactadas
+por una IA **gratis y local**, usa **Ollama**:
+
+```bash
+# 1) Instala Ollama: https://ollama.com/download
+# 2) Descarga un modelo (una vez):
+ollama pull llama3.2
+# 3) Corre el dashboard: el chatbot detecta Ollama automáticamente 🟢
+```
+
+Alternativa en la nube (de pago) con Claude:
 
 ```bash
 export ANTHROPIC_API_KEY="tu-clave-de-anthropic"   # Windows: set ANTHROPIC_API_KEY=...

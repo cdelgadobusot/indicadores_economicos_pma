@@ -21,6 +21,7 @@ se cambia en un solo sitio.
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -52,8 +53,19 @@ for _carpeta in (RAW_DIR, PROCESSED_DIR):
 # ---------------------------------------------------------------------------
 PAIS_NOMBRE: str = "Panamá"
 PAIS_ISO3: str = "PAN"        # Código ISO-3166 alfa-3 usado por el Banco Mundial
+
+# Año inicial del estudio. Se usa 2000 porque la cobertura de datos del Banco
+# Mundial para Panamá es completa y consistente desde entonces, y 25 años dan
+# suficiente historia para detectar tendencias y entrenar los modelos.
 ANIO_INICIO: int = 2000
-ANIO_FIN: int = 2024
+
+# Año final = AÑO ACTUAL (dinámico). Antes estaba fijo en 2024; ahora se calcula
+# con la fecha del sistema para pedir SIEMPRE los datos más recientes posibles.
+# Importante: el año final EFECTIVO de los datos depende de la disponibilidad en
+# la fuente. El Banco Mundial publica los indicadores con 1-2 años de rezago, así
+# que el último año con dato real suele ser el año actual menos 1 o 2.
+ANIO_FIN: int = datetime.now().year
+
 ANIOS_PRONOSTICO: int = 3      # Cuántos años hacia el futuro predicen los modelos
 
 
@@ -218,6 +230,13 @@ WB_FORMATO: str = "json"
 WB_PER_PAGE: int = 500        # Suficiente para traer todos los años en una página
 WB_TIMEOUT: int = 20          # Segundos antes de abortar una petición HTTP
 
+# URL para descargar la Fuente 2 (Contraloría/INEC/ACP) EN TIEMPO REAL. Si está
+# definida (por variable de entorno CONTRALORIA_URL), el pipeline intenta bajar un
+# CSV en vivo desde ahí; si está vacía o la descarga falla, usa el CSV local
+# representativo como respaldo. El CSV remoto debe tener una columna 'anio' y una
+# columna por indicador (canal_transitos, canal_ingresos, imae).
+CONTRALORIA_URL: str = os.environ.get("CONTRALORIA_URL", "")
+
 
 # ---------------------------------------------------------------------------
 # 5. PARÁMETROS DEL CHATBOT RAG (Claude / Anthropic)
@@ -229,6 +248,28 @@ WB_TIMEOUT: int = 20          # Segundos antes de abortar una petición HTTP
 MODELO_CLAUDE: str = "claude-opus-4-8"
 MAX_TOKENS_RESPUESTA: int = 1024
 RAG_TOP_K: int = 5            # Número de fragmentos recuperados por consulta
+
+# ---------------------------------------------------------------------------
+# 6. PROVEEDOR DE GENERACIÓN DEL CHATBOT (Ollama gratis / Claude / extractivo)
+# ---------------------------------------------------------------------------
+# El chatbot puede generar la respuesta con distintos motores. Para tener un RAG
+# "gratis y de calidad" se usa OLLAMA: un modelo de lenguaje que corre LOCALMENTE
+# en tu computadora, sin clave de API, sin costo y sin límites.
+#
+# PROVEEDOR_LLM controla qué motor se usa (se puede fijar por variable de entorno
+# CHATBOT_PROVEEDOR):
+#   "auto"       -> usa Ollama si está corriendo (gratis); si no, Claude (si hay
+#                   ANTHROPIC_API_KEY); si no, el modo extractivo. (Recomendado.)
+#   "ollama"     -> fuerza Ollama (gratis, local).
+#   "claude"     -> fuerza Claude (requiere ANTHROPIC_API_KEY).
+#   "extractivo" -> sin modelo de lenguaje (siempre funciona).
+PROVEEDOR_LLM: str = os.environ.get("CHATBOT_PROVEEDOR", "auto")
+
+# Parámetros de Ollama (servidor local de modelos de lenguaje gratuitos).
+# Modelos recomendados (ligeros y buenos en español): "llama3.2", "qwen2.5:3b".
+OLLAMA_HOST: str = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_MODELO: str = os.environ.get("OLLAMA_MODELO", "llama3.2")
+OLLAMA_TIMEOUT: int = 120     # Segundos máximos por respuesta del modelo local
 
 
 if __name__ == "__main__":

@@ -33,6 +33,7 @@ import os
 
 import numpy as np
 import pandas as pd
+import requests
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -241,7 +242,9 @@ class ChatbotRAG:
         )
         self.matriz = self.vectorizador.fit_transform(self.textos)
 
+        # Motores de generación disponibles y cuál se usará.
         self.cliente_claude = self._crear_cliente_claude()
+        self.proveedor = self._resolver_proveedor()
 
     # ---- Recuperación --------------------------------------------------
     def recuperar(self, pregunta: str, k: int | None = None) -> list[dict]:
@@ -265,12 +268,16 @@ class ChatbotRAG:
     def responder(self, pregunta: str, k: int | None = None) -> dict:
         """Responde una pregunta usando RAG.
 
+        Recupera el contexto y genera la respuesta con el proveedor activo
+        (Ollama gratis, Claude o extractivo). Si el motor elegido falla, cae al
+        modo extractivo para que el chatbot SIEMPRE responda.
+
         Returns
         -------
         dict con:
             'respuesta' -> texto de la respuesta.
             'fuentes'   -> lista de documentos recuperados (para citar).
-            'modo'      -> 'claude' o 'extractivo'.
+            'modo'      -> 'ollama', 'claude' o 'extractivo'.
         """
         contexto = self.recuperar(pregunta, k)
         if not contexto:
@@ -284,7 +291,14 @@ class ChatbotRAG:
                 "modo": "extractivo",
             }
 
-        if self.cliente_claude is not None:
+        if self.proveedor == "ollama":
+            try:
+                respuesta = self._generar_con_ollama(pregunta, contexto)
+                return {"respuesta": respuesta, "fuentes": contexto, "modo": "ollama"}
+            except Exception as exc:  # noqa: BLE001 - cae al modo de respaldo
+                print(f"  [aviso] Falló Ollama ({exc}); uso modo extractivo.")
+
+        elif self.proveedor == "claude":
             try:
                 respuesta = self._generar_con_claude(pregunta, contexto)
                 return {"respuesta": respuesta, "fuentes": contexto, "modo": "claude"}
@@ -294,8 +308,13 @@ class ChatbotRAG:
         respuesta = self._generar_extractivo(pregunta, contexto)
         return {"respuesta": respuesta, "fuentes": contexto, "modo": "extractivo"}
 
-    def _generar_con_claude(self, pregunta: str, contexto: list[dict]) -> str:
-        """Llama a Claude con el contexto recuperado (RAG real)."""
+    def _construir_prompt(self, pregunta: str, contexto: list[dict]) -> tuple[str, str]:
+        """Arma el (sistema, prompt) común a Ollama y Claude a partir del contexto.
+
+        El "sistema" instruye al modelo a responder solo con el contexto (RAG
+        anclado), en español y sin inventar cifras. El "prompt" inserta los
+        fragmentos recuperados y la pregunta.
+        """
         bloques = "\n".join(f"- {d['texto']}" for d in contexto)
         sistema = (
             "Eres un asistente experto en economía panameña. Responde de forma "
@@ -309,6 +328,36 @@ class ChatbotRAG:
             f"PREGUNTA DEL USUARIO: {pregunta}\n\n"
             f"Responde con base en el contexto anterior."
         )
+        return sistema, prompt
+
+    def _generar_con_ollama(self, pregunta: str, contexto: list[dict]) -> str:
+        """Genera la respuesta con un modelo local de Ollama (gratis, sin clave).
+
+        Hace una petición HTTP al servidor local de Ollama
+        (`/api/chat`), pasándole el sistema y el prompt con el contexto. No
+        requiere ninguna librería extra: solo `requests`.
+        """
+        sistema, prompt = self._construir_prompt(pregunta, contexto)
+        payload = {
+            "model": config.OLLAMA_MODELO,
+            "messages": [
+                {"role": "system", "content": sistema},
+                {"role": "user", "content": prompt},
+            ],
+            "stream": False,                 # Queremos la respuesta completa de una vez.
+            "options": {"temperature": 0.2}, # Baja temperatura = más fiel a los datos.
+        }
+        respuesta = requests.post(
+            f"{config.OLLAMA_HOST}/api/chat",
+            json=payload,
+            timeout=config.OLLAMA_TIMEOUT,
+        )
+        respuesta.raise_for_status()
+        return respuesta.json()["message"]["content"].strip()
+
+    def _generar_con_claude(self, pregunta: str, contexto: list[dict]) -> str:
+        """Llama a Claude con el contexto recuperado (RAG real)."""
+        sistema, prompt = self._construir_prompt(pregunta, contexto)
         respuesta = self.cliente_claude.messages.create(
             model=config.MODELO_CLAUDE,
             max_tokens=config.MAX_TOKENS_RESPUESTA,
@@ -331,7 +380,36 @@ class ChatbotRAG:
             f"para tu pregunta «{pregunta}»:\n" + "\n".join(lineas)
         )
 
-    # ---- Utilidades ----------------------------------------------------
+    # ---- Selección de proveedor / utilidades ---------------------------
+    def _resolver_proveedor(self) -> str:
+        """Decide qué motor de generación usar según `config.PROVEEDOR_LLM`.
+
+        En modo "auto" prioriza lo GRATIS y local: usa Ollama si está corriendo;
+        si no, Claude (si hay clave); y si no, el modo extractivo.
+        """
+        preferencia = config.PROVEEDOR_LLM.lower().strip()
+        if preferencia == "ollama":
+            return "ollama" if self._ollama_disponible() else "extractivo"
+        if preferencia == "claude":
+            return "claude" if self.cliente_claude is not None else "extractivo"
+        if preferencia == "extractivo":
+            return "extractivo"
+        # "auto": gratis primero.
+        if self._ollama_disponible():
+            return "ollama"
+        if self.cliente_claude is not None:
+            return "claude"
+        return "extractivo"
+
+    @staticmethod
+    def _ollama_disponible() -> bool:
+        """Comprueba (rápido) si el servidor de Ollama está corriendo localmente."""
+        try:
+            r = requests.get(f"{config.OLLAMA_HOST}/api/tags", timeout=2)
+            return r.status_code == 200
+        except requests.RequestException:
+            return False
+
     @staticmethod
     def _crear_cliente_claude():
         """Crea el cliente de Anthropic si hay clave; si no, devuelve None."""
@@ -344,15 +422,19 @@ class ChatbotRAG:
         except Exception:  # noqa: BLE001
             return None
 
+    def proveedor_activo(self) -> str:
+        """Devuelve el motor de generación en uso: 'ollama', 'claude' o 'extractivo'."""
+        return self.proveedor
+
     def usa_claude(self) -> bool:
-        """Indica si el chatbot puede usar Claude (hay clave y SDK)."""
-        return self.cliente_claude is not None
+        """Indica si el chatbot está usando Claude (compatibilidad)."""
+        return self.proveedor == "claude"
 
 
 if __name__ == "__main__":
     bot = ChatbotRAG()
     print(f"Base de conocimiento: {len(bot.documentos)} documentos.")
-    print(f"¿Usa Claude?: {bot.usa_claude()}")
+    print(f"Proveedor de generación activo: {bot.proveedor_activo()}")
     for pregunta in [
         "¿Cómo le fue al PIB de Panamá en 2020?",
         "¿Qué pasó con el desempleo durante la pandemia?",

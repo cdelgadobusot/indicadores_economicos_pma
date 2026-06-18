@@ -263,20 +263,53 @@ def generar_csv_contraloria(forzar: bool = False) -> None:
     df.to_csv(config.CONTRALORIA_CSV, index=False)
 
 
-def cargar_contraloria() -> pd.DataFrame:
-    """Lee el CSV de la Contraloría y lo devuelve en formato largo (tidy).
+def _descargar_contraloria_url(url: str) -> pd.DataFrame | None:
+    """Intenta descargar EN VIVO el CSV de la Fuente 2 desde una URL.
 
-    Garantiza que el archivo exista (lo genera si hace falta), lo lee con pandas
-    y lo transforma de formato ancho a largo con `melt`, para unificarlo con la
-    estructura de la Fuente 1.
+    Espera un CSV con una columna 'anio' y una columna por indicador. Devuelve el
+    DataFrame ancho si la descarga y el formato son válidos, o None si falla.
+    """
+    try:
+        respuesta = requests.get(url, timeout=config.WB_TIMEOUT)
+        respuesta.raise_for_status()
+        df = pd.read_csv(io.StringIO(respuesta.text))
+    except (requests.RequestException, ValueError):
+        return None
+    if "anio" not in df.columns or df.shape[1] < 2:
+        return None
+    return df
+
+
+def cargar_contraloria() -> pd.DataFrame:
+    """Carga la Fuente 2 (Contraloría/INEC/ACP) y la devuelve en formato largo.
+
+    Estrategia de ingesta con respaldo:
+      1. Si `config.CONTRALORIA_URL` está definida, intenta descargar el CSV EN
+         TIEMPO REAL desde esa URL (datos oficiales actualizados).
+      2. Si no hay URL o la descarga falla, usa el CSV local representativo como
+         respaldo, garantizando que el pipeline nunca se rompa.
+
+    En ambos casos transforma de formato ancho a largo con `melt`, para unificarlo
+    con la estructura de la Fuente 1.
 
     Returns
     -------
     pd.DataFrame
         Formato largo: columnas ['anio', 'codigo', 'valor', 'fuente'].
     """
-    generar_csv_contraloria()
-    ancho = pd.read_csv(config.CONTRALORIA_CSV)
+    ancho = None
+    if config.CONTRALORIA_URL:
+        ancho = _descargar_contraloria_url(config.CONTRALORIA_URL)
+
+    if ancho is not None:
+        ancho.to_csv(config.CONTRALORIA_CSV, index=False)  # actualiza el caché local
+        print("  [ok] Contraloría/INEC: descargado en vivo desde CONTRALORIA_URL.")
+    else:
+        if config.CONTRALORIA_URL:
+            print("  [aviso] No se pudo descargar CONTRALORIA_URL; uso el CSV local.")
+        generar_csv_contraloria()
+        ancho = pd.read_csv(config.CONTRALORIA_CSV)
+        print(f"  [ok] Contraloría/INEC: datos locales ({config.CONTRALORIA_CSV.name}).")
 
     # De ancho -> largo: cada columna de indicador se convierte en filas.
     largo = ancho.melt(id_vars="anio", var_name="codigo", value_name="valor")
@@ -286,7 +319,6 @@ def cargar_contraloria() -> pd.DataFrame:
         lambda c: config.META_POR_CODIGO.get(c, {}).get("fuente", "Contraloría / INEC")
     )
     largo = largo[["anio", "codigo", "valor", "fuente"]]
-    print(f"  [ok] Datos de la Contraloría/INEC cargados desde {config.CONTRALORIA_CSV.name}.")
     return largo
 
 

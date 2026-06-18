@@ -1,9 +1,11 @@
-# Configuración del tema del dashboard de Streamlit.
+# Tema base del dashboard. El estilo fino (tipografías, animaciones, tarjetas) se
+# inyecta por CSS desde dashboard/app.py.
 [theme]
-primaryColor = "#0067b1"        # Azul (bandera de Panamá)
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f3f6fa"
-textColor = "#1b1b1b"
+base = "dark"
+primaryColor = "#38bdf8"              # Azul cielo de acento (contraste)
+backgroundColor = "#071a2f"           # Azul marino profundo (fondo principal)
+secondaryBackgroundColor = "#0c2340"  # Azul de tarjetas / barra lateral
+textColor = "#e8f0f8"                 # Texto claro de alto contraste
 font = "sans serif"
 
 [server]
