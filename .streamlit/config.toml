@@ -1,0 +1,10 @@
+# Configuración del tema del dashboard de Streamlit.
+[theme]
+primaryColor = "#0067b1"        # Azul (bandera de Panamá)
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f3f6fa"
+textColor = "#1b1b1b"
+font = "sans serif"
+
+[server]
+headless = true

@@ -1,0 +1,28 @@
+# --- Entornos virtuales ---
+.venv/
+venv/
+env/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# --- Datos generados por el pipeline (se regeneran al ejecutar) ---
+# Se ignoran las cachés y datasets procesados; el CSV de la Contraloría se
+# regenera automáticamente. Descomenta si NO quieres versionar los datos.
+data/processed/*.csv
+data/raw/banco_mundial_panama.csv
+
+# --- Claves y secretos ---
+.env
+*.key
+.streamlit/secrets.toml
+
+# --- Sistema operativo ---
+.DS_Store
+Thumbs.db
+
+# --- Salidas de Jupyter ejecutado ---
+notebooks/*.nbconvert.ipynb
