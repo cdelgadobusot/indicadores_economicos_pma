@@ -31,7 +31,7 @@ datos, modelos predictivos, un dashboard y un chatbot.
   de regímenes económicos (KMeans).
 - 📊 **Dashboard interactivo** (Streamlit) con tendencias, predicciones y análisis.
 - 💬 **Chatbot con RAG** conectado a los datos (recuperación TF-IDF + generación con
-  Claude `claude-opus-4-8`, con modo extractivo de respaldo sin clave).
+  **Ollama** —IA local gratis— o Claude, con modo extractivo de respaldo).
 
 ## 🗺️ Arquitectura
 
@@ -115,12 +115,14 @@ export ANTHROPIC_API_KEY="tu-clave-de-anthropic"   # Windows: set ANTHROPIC_API_
 
 | Fuente | Mecanismo | Indicadores |
 |--------|-----------|-------------|
-| **Banco Mundial** ([data.worldbank.org](https://data.worldbank.org)) | API REST | PIB, crecimiento, inflación, desempleo, IED, PIB per cápita |
-| **Contraloría / INEC / ACP** ([contraloria.gob.pa](https://www.contraloria.gob.pa/inec/)) | Archivo CSV | Tránsitos e ingresos del Canal de Panamá, IMAE |
+| **Banco Mundial** ([data.worldbank.org](https://data.worldbank.org)) | API REST (en vivo) | PIB, crecimiento, inflación, desempleo, IED, PIB per cápita |
+| **Contraloría / INEC / ACP** ([contraloria.gob.pa](https://www.contraloria.gob.pa/inec/)) | CSV (en vivo si se define `CONTRALORIA_URL`, o local) | Tránsitos e ingresos del Canal de Panamá, IMAE |
 
-> Los datos del Banco Mundial se descargan en vivo. La fuente Contraloría/INEC/ACP
-> se entrega como CSV con cifras representativas basadas en datos públicos reales
-> (2000–2024), documentado en [`docs/DOCUMENTACION.md`](docs/DOCUMENTACION.md).
+> El Banco Mundial se descarga **en vivo**, con rango de años **dinámico** (de 2000
+> hasta el año actual según disponibilidad). La fuente Contraloría/INEC/ACP se
+> descarga en tiempo real si configuras `CONTRALORIA_URL`; si no, usa un CSV local
+> con cifras representativas basadas en datos públicos reales como respaldo. Detalle
+> en [`docs/DOCUMENTACION.md`](docs/DOCUMENTACION.md) (§14.2 y §14.3).
 
 ## 🤖 Modelos de Machine Learning
 

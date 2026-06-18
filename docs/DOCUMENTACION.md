@@ -217,11 +217,18 @@ más dos funciones de ayuda: `nombre_indicador(codigo)` y `unidad_indicador(codi
 ```python
 WB_BASE_URL = "https://api.worldbank.org/v2"   # API del Banco Mundial
 PAIS_ISO3   = "PAN"                             # Código ISO de Panamá
-ANIO_INICIO, ANIO_FIN = 2000, 2024
+ANIO_INICIO = 2000                              # Año inicial del estudio
+ANIO_FIN    = datetime.now().year               # Año final DINÁMICO (año actual)
 ANIOS_PRONOSTICO = 3                            # Años a predecir
-MODELO_CLAUDE = "claude-opus-4-8"              # Modelo de IA del chatbot
+CONTRALORIA_URL  = os.environ.get("CONTRALORIA_URL", "")  # Fuente 2 en vivo (opcional)
+MODELO_CLAUDE = "claude-opus-4-8"              # Modelo de Claude (si se usa)
+PROVEEDOR_LLM = "auto"                          # Motor del chatbot: Ollama/Claude/extractivo
 RAG_TOP_K = 5                                   # Fragmentos recuperados por consulta
 ```
+
+> Nota: `ANIO_FIN` ahora es dinámico (ver §14.2) y se añadió `CONTRALORIA_URL`
+> para la descarga en vivo de la Fuente 2 (ver §14.3) y `PROVEEDOR_LLM` para
+> elegir el motor del chatbot (ver §9.5).
 
 ---
 
@@ -238,7 +245,8 @@ diferentes** y de **preprocesar y transformar** los datos.
 
 1. Construye la URL:
    `https://api.worldbank.org/v2/country/PAN/indicator/{wb_code}`
-   con parámetros `format=json`, `per_page=500`, `date=2000:2024`.
+   con parámetros `format=json`, `per_page=500`, `date=2000:<año actual>` (el año
+   final es dinámico; ver §14.2).
 2. Hace la petición con `requests.get(...)` y `raise_for_status()` (lanza
    excepción si el código HTTP es ≥ 400).
 3. La API devuelve una **lista de 2 elementos**: `[metadatos, observaciones]`.
@@ -453,33 +461,48 @@ Devuelve: `asignaciones` (cada año con su clúster y etiqueta), `perfiles`
 
 Aplicación web hecha con **Streamlit** que reutiliza todos los módulos de `src/`.
 
+El dashboard tiene un **diseño profesional de tema oscuro azul marino**, con
+tipografías personalizadas, sin emojis y con animaciones. El detalle visual está
+en la [sección 17](#17-diseño-visual-del-dashboard-tema-tipografías-animaciones);
+aquí se describe su estructura funcional.
+
 ### 8.1 Estructura
 
-- **Configuración de página** (`st.set_page_config`): título, ícono 🇵🇦, ancho.
+- **Configuración de página** (`st.set_page_config`): título y diseño ancho (sin
+  ícono ni emojis).
+- **Estilos**: la función `inyectar_estilos()` inyecta el CSS (fuentes de Google,
+  paleta azul marino, animaciones, tarjetas) con `st.markdown(..., unsafe_allow_html=True)`.
 - **Carga con caché:** `@st.cache_data` envuelve el pipeline, los modelos y el
   clustering para que **no se recalculen** en cada interacción del usuario.
   `@st.cache_resource` guarda el chatbot (que mantiene un modelo TF-IDF en memoria).
   El prefijo `_` en los argumentos (`_features`, `_ancho`) le dice a Streamlit que
   no intente "hashear" esos DataFrames.
-- **KPIs** (`st.metric`): muestran el último valor de 4 indicadores clave con su
-  **variación** (delta) respecto al año anterior.
+- **Encabezado "hero"**: bloque HTML con título, subtítulo, barra de acento y chips.
+- **KPIs**: tarjetas HTML a medida (función `tarjeta_kpi`, clase CSS `.kpi`), NO
+  `st.metric`, para controlar la tipografía monoespaciada y la animación. Muestran
+  el último valor de 4 indicadores con su **variación** (verde/rojo, con triángulos
+  ▲/▼, no emojis).
+- **Gráficas**: la función `estilizar_fig()` aplica el tema oscuro de Plotly a cada
+  figura para que combine con el fondo azul marino.
 
 ### 8.2 Las 4 pestañas (`st.tabs`)
 
 | Pestaña | Contenido | Componentes |
 |---------|-----------|-------------|
-| **📈 Tendencias** | Líneas de los indicadores seleccionados | `st.multiselect`, `st.slider` (rango de años), checkbox de normalización, `plotly.express.line` |
-| **🔮 Predicciones** | Histórico + pronóstico del indicador elegido + métricas | `st.selectbox`, `st.metric`, `plotly.graph_objects.Scatter` |
-| **🧩 Análisis** | Clustering: dispersión coloreada por régimen + perfiles + línea de tiempo | `plotly.express.scatter`, `st.dataframe` |
-| **💬 Chatbot RAG** | Caja de preguntas + botones de ejemplo + respuesta + fuentes | `st.text_input`, `st.button`, `st.expander` |
+| **Tendencias** | Líneas de los indicadores seleccionados | `st.multiselect`, `st.slider` (rango de años), checkbox de normalización, `plotly.express.line` |
+| **Predicciones** | Histórico + pronóstico del indicador elegido + métricas | `st.selectbox`, tarjetas de métrica, `plotly.graph_objects.Scatter` |
+| **Análisis** | Clustering: dispersión coloreada por régimen + perfiles + línea de tiempo | `plotly.express.scatter`, `st.dataframe` |
+| **Asistente** | Caja de preguntas + botones de ejemplo + respuesta + fuentes | `st.text_input`, `st.button`, `st.expander` |
 
 ### 8.3 Detalles de UX
 
 - Botones de **preguntas de ejemplo** que rellenan la caja del chatbot vía
   `st.session_state`.
-- **Indicador del modo** del chatbot (Claude vs. extractivo) según haya o no clave.
+- **Indicador del motor** del chatbot (Ollama / Claude / extractivo) según el que
+  esté activo (`chatbot.proveedor_activo()`).
 - **Barra lateral** (`st.sidebar`) con la descripción del proyecto y las fuentes.
-- Tema visual definido en `.streamlit/config.toml` (azul de la bandera de Panamá).
+- Tema base oscuro definido en `.streamlit/config.toml`; el estilo fino se inyecta
+  por CSS desde `app.py`.
 
 > **Nota sobre la API de Streamlit.** Se usa `width="stretch"` (la API moderna) en
 > lugar del antiguo `use_container_width=True`, que quedó obsoleto.
@@ -543,9 +566,9 @@ preferencia (modo `"auto"`):
 
 | Motor | Costo | Requiere | Cuándo se usa |
 |-------|-------|----------|---------------|
-| **Ollama** 🟢 | **Gratis** | App Ollama corriendo localmente | Recomendado. IA local, sin clave, sin límites, offline. |
-| **Claude** ☁️ | De pago | `ANTHROPIC_API_KEY` | Si defines la clave de Anthropic. |
-| **Extractivo** 📄 | Gratis | Nada | Respaldo: si no hay ninguno de los anteriores. |
+| **Ollama** | **Gratis** | App Ollama corriendo localmente | Recomendado. IA local, sin clave, sin límites, offline. |
+| **Claude** | De pago | `ANTHROPIC_API_KEY` | Si defines la clave de Anthropic. |
+| **Extractivo** | Gratis | Nada | Respaldo: si no hay ninguno de los anteriores. |
 
 **`responder(pregunta)`** orquesta:
 
