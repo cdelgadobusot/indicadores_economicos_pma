@@ -2,6 +2,10 @@
 
 > Proyecto Integrador — **Segundo Parcial** · Gestión de la Información
 > Universidad Tecnológica de Panamá · Facultad de Ingeniería de Sistemas Computacionales · I Semestre 2026
+> Carlos Delgado
+> Adolfo López
+> Aldo Apicella
+> Yamar Camarena
 
 Sistema de gestión de información que **ingiere, procesa, modela y presenta** los
 principales indicadores económicos de Panamá, e incluye un **chatbot con IA (RAG)**

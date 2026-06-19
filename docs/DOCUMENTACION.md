@@ -4,6 +4,10 @@
 **Universidad Tecnológica de Panamá** · Facultad de Ingeniería de Sistemas Computacionales
 **Gestión de la Información** — I Semestre 2026 · **Proyecto Integrador — Segundo Parcial**
 
+Carlos Delgado
+Adolfo López
+Aldo Apicella
+Yamar Camarena
 ---
 
 Este documento explica **en detalle y línea por línea** todo lo implementado en el
