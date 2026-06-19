@@ -37,6 +37,7 @@ y en los módulos de Python que lo soportan.
 15. [Cambios recientes: años dinámicos, Fuente 2 en vivo y rediseño](#15-cambios-recientes-años-dinámicos-fuente-2-en-vivo-y-rediseño)
 16. [Conceptos clave explicados a fondo](#16-conceptos-clave-explicados-a-fondo)
 17. [Diseño visual del dashboard (tema, tipografías, animaciones)](#17-diseño-visual-del-dashboard-tema-tipografías-animaciones)
+18. [Las fuentes de datos y el flujo extracción → limpieza → preprocesamiento (a fondo)](#18-las-fuentes-de-datos-y-el-flujo-extracción--limpieza--preprocesamiento-a-fondo)
 
 ---
 
@@ -1208,6 +1209,194 @@ Definidas con CSS `@keyframes` e inyectadas con `st.markdown(..., unsafe_allow_h
 > tienes el servidor abierto, **reinícialo** (Ctrl+C y de nuevo `streamlit run …`),
 > porque `@st.cache_resource`/`@st.cache_data` conservan en memoria los objetos
 > creados con el código anterior.
+
+---
+
+## 18. Las fuentes de datos y el flujo extracción → limpieza → preprocesamiento (a fondo)
+
+Esta sección explica con todo detalle **qué datos usamos, de dónde, cómo los
+traemos, cómo los limpiamos y cómo los transformamos**, y —sobre todo— **por qué**
+tomamos cada decisión.
+
+### 18.1 ¿Por qué exactamente estas dos fuentes?
+
+El proyecto exige **al menos 2 fuentes de datos diferentes**. No basta con cumplir
+el número: las elegimos para que sean **complementarias** y de **alta calidad**.
+Los criterios fueron:
+
+1. **Confiabilidad y autoridad.** Que sean fuentes oficiales o de organismos
+   reconocidos, no blogs ni datos sin respaldo.
+2. **Acceso programático / reproducible.** Que se puedan automatizar (API o
+   archivo), no copiar a mano.
+3. **Gratuitas y públicas.** Sin costo ni claves privadas.
+4. **Complementariedad.** Que cada una aporte algo que la otra no tiene.
+5. **Diversidad de mecanismo.** Que demuestren dos formas técnicas distintas de
+   ingerir datos (una API REST y un archivo CSV).
+
+Con esos criterios elegimos:
+
+| Fuente | Tipo | Mecanismo | Mirada que aporta |
+|--------|------|-----------|-------------------|
+| **Banco Mundial** | Organismo internacional | **API REST** (en vivo) | Macroeconomía comparable internacionalmente (PIB, inflación, desempleo, IED…) |
+| **Contraloría / INEC / ACP** | Fuentes oficiales nacionales | **Archivo CSV** (en vivo o local) | Indicadores propios de Panamá que NO están en el Banco Mundial (Canal de Panamá, IMAE) |
+
+**Por qué juntas y no una sola:** el Banco Mundial da la "foto macro" comparable
+con otros países, pero **no** tiene los indicadores específicos del **Canal de
+Panamá** ni el **IMAE**, que son centrales para entender la economía panameña. La
+Contraloría/INEC/ACP los aporta. Juntas dan una visión **macro + nacional/sectorial**
+que ninguna por sí sola lograría. Además, usar **una API y un CSV** demuestra dos
+mecanismos de ingesta distintos (cumple el requisito de forma significativa, no
+solo formal).
+
+### 18.2 Fuente 1 — Banco Mundial (World Bank Open Data)
+
+**Qué es y por qué la elegimos.** El Banco Mundial mantiene la base de datos
+abierta de indicadores de desarrollo más usada del mundo (*World Development
+Indicators*). Para Panamá ofrece series largas, consistentes y con metodología
+internacional comparable. Es **gratuita, sin clave, y con una API REST estable** —
+ideal para un pipeline reproducible.
+
+**Dónde se busca.**
+- Portal humano: `https://data.worldbank.org` (se busca el país "Panama" y el
+  indicador; cada indicador tiene un **código**).
+- API (la que usa el código): `https://api.worldbank.org/v2/country/PAN/indicator/{CODIGO}`
+
+**Cómo funciona (mecanismo técnico).** Se hace una petición HTTP `GET` por
+indicador con los parámetros `format=json`, `per_page=500` y
+`date=2000:<año actual>`. La API responde un **JSON de 2 elementos**:
+`[ metadatos_de_paginación , lista_de_observaciones ]`. De cada observación
+tomamos solo dos campos: `date` (el año) y `value` (el valor; puede venir `null`).
+Esto se hace en `descargar_indicador_banco_mundial()` (ver §5.1 y §16.1).
+
+**Qué buscamos / qué extraemos exactamente.** De todos los miles de indicadores
+del Banco Mundial extraemos **6**, elegidos porque son los que mejor describen la
+salud económica de un país y permiten predecir y agrupar:
+
+| Código interno | Código Banco Mundial | Qué mide | **Por qué exactamente este** |
+|----------------|----------------------|----------|------------------------------|
+| `pib_crecimiento` | `NY.GDP.MKTP.KD.ZG` | Crecimiento real anual del PIB (%) | Es **el** indicador titular de si la economía se expande o se contrae. Sin él no se entiende nada. |
+| `pib_per_capita` | `NY.GDP.PCAP.CD` | PIB por habitante (USD) | Aproxima el **nivel de vida** promedio. Lo usamos además como **objetivo de pronóstico** por su tendencia clara. |
+| `inflacion` | `FP.CPI.TOTL.ZG` | Variación anual de precios, IPC (%) | Mide el **costo de vida**. En Panamá (dolarizada) suele ser baja; revela episodios como la deflación de 2020. |
+| `desempleo` | `SL.UEM.TOTL.ZS` | Tasa de desempleo (%) | Indicador **social** clave; muestra el golpe del COVID-19 (subió a ~18 %). |
+| `pib_usd` | `NY.GDP.MKTP.CD` | PIB total (USD corrientes) | Da el **tamaño** absoluto de la economía (contexto). |
+| `ied` | `BX.KLT.DINV.CD.WD` | Inversión Extranjera Directa, entradas netas (USD) | Refleja la **confianza** de inversionistas externos; es un indicador adelantado del crecimiento futuro. |
+
+**Qué muestran (en Panamá).** Juntos cuentan la historia reciente: el auge de los
+2000, el desplome histórico de **−17.9 %** del PIB en 2020 por la pandemia, la
+recuperación de 2021 y la desaceleración de 2024 tras el cierre de la mina de cobre.
+
+### 18.3 Fuente 2 — Contraloría General / INEC / Autoridad del Canal (ACP)
+
+**Qué es y por qué la elegimos.** El **Instituto Nacional de Estadística y Censo
+(INEC)**, que forma parte de la **Contraloría General de la República**, es la
+fuente **oficial** de las estadísticas de Panamá. La **Autoridad del Canal de
+Panamá (ACP)** publica las cifras del Canal. Los elegimos porque aportan
+indicadores **propios de Panamá** que el Banco Mundial no tiene y que son
+económicamente decisivos para el país.
+
+**Dónde se busca.**
+- INEC / Contraloría: `https://www.contraloria.gob.pa/inec/` (cuentas nacionales,
+  **IMAE**, encuesta de mercado laboral, comercio).
+- Autoridad del Canal: `https://www.pancanal.com` (estadísticas de **tránsitos** e
+  **ingresos** del Canal).
+
+**Cómo funciona (mecanismo técnico) y por qué es distinto al Banco Mundial.** A
+diferencia del Banco Mundial, **estas instituciones no exponen una API REST
+estable**: su información vive en portales, tablas HTML y PDFs. Por eso la tratamos
+como un **archivo CSV**. El pipeline (`cargar_contraloria()`) hace lo siguiente:
+
+1. Si defines `CONTRALORIA_URL`, **descarga el CSV en tiempo real** desde esa URL
+   (datos oficiales actualizados).
+2. Si no, usa un **CSV local** con cifras **representativas basadas en datos
+   públicos reales** como respaldo, para que el proyecto sea reproducible siempre
+   (ver §14.3). Esto se documenta con honestidad: la Fuente 2 local es
+   representativa, no una descarga byte a byte del portal.
+
+**Qué buscamos / qué extraemos exactamente.** Extraemos **3** indicadores que el
+Banco Mundial no ofrece y que son clave para Panamá:
+
+| Código interno | Indicador | Origen | Qué mide | **Por qué exactamente este** |
+|----------------|-----------|--------|----------|------------------------------|
+| `canal_transitos` | Tránsitos por el Canal | ACP | Buques de alto calado por año | El Canal es **columna vertebral** de la economía; los tránsitos son un termómetro del **comercio mundial** y muestran el impacto de la sequía 2023-2024. |
+| `canal_ingresos` | Ingresos del Canal | ACP | Ingresos por peajes (millones USD) | Aporte **fiscal directo** del Canal al país. |
+| `imae` | Índice Mensual de Actividad Económica | Contraloría/INEC | Actividad económica, base 2007 = 100 | Indicador **adelantado** y de alta frecuencia del ritmo de la economía panameña (propio de la Contraloría). |
+
+**Qué muestran (en Panamá).** Reflejan la dimensión **nacional/sectorial**: la
+importancia del Canal como fuente de divisas e ingresos, y el pulso mensual de la
+actividad económica que el PIB anual no capta.
+
+### 18.4 Extracción (ingesta) paso a paso
+
+La extracción la orquesta `ingestar_todo()`, que llama a las dos funciones de
+fuente y une sus resultados (§14.4). El objetivo de esta etapa es traer los datos
+crudos y dejarlos **todos con la misma estructura** (formato largo de 4 columnas:
+`anio, codigo, valor, fuente`), sin importar de qué fuente vengan.
+
+```
+descargar_banco_mundial()   →  [anio, codigo, valor, fuente]  (6 indicadores)
+cargar_contraloria()        →  [anio, codigo, valor, fuente]  (3 indicadores)
+                 └── pd.concat ──→  un solo DataFrame largo (≈231 filas)
+```
+
+**Robustez:** si la API del Banco Mundial no responde, se usan datos de respaldo
+embebidos; si la URL de la Contraloría falla o no está definida, se usa el CSV
+local. Por eso la extracción **nunca rompe el pipeline**.
+
+### 18.5 Limpieza paso a paso (`limpiar`)
+
+Sobre el DataFrame largo crudo se aplican, en orden:
+
+| Paso | Qué hace | Por qué |
+|------|----------|---------|
+| Tipado de `anio` | `pd.to_numeric(..., errors="coerce").astype("Int64")` | Asegura que el año sea un entero; un valor raro se vuelve `NaN` en vez de romper (§14.5). |
+| Tipado de `valor` | `pd.to_numeric(..., errors="coerce")` | Garantiza que el valor sea numérico para poder calcular. |
+| Quitar filas sin año | `dropna(subset=["anio"])` | Una observación sin año no sirve. |
+| Quitar duplicados | `drop_duplicates(["anio","codigo"], keep="last")` | Evita que un mismo (año, indicador) aparezca dos veces; conserva el más reciente. |
+| Ordenar | `sort_values(["codigo","anio"])` | Deja la serie de cada indicador en orden cronológico (necesario para rezagos y medias móviles). |
+
+### 18.6 Preprocesamiento / transformación paso a paso
+
+Convierte los datos limpios en datasets listos para modelar:
+
+1. **Pivoteo a ancho** (`a_formato_ancho`): de "una fila por (año, indicador)" a
+   "una fila por año, una columna por indicador" (§14.6 y §14.7).
+2. **Manejo de nulos** (`manejar_nulos`): interpolación lineal en el tiempo +
+   relleno hacia adelante/atrás para los extremos (§14.8 y §14.9). Antes de
+   imputar se genera un **reporte de nulos** para documentar la calidad.
+3. **Ingeniería de características** (`crear_features`): por cada indicador se crean
+   `*_var` (variación %), `*_mm3` (media móvil 3 años) y `*_lag1` (rezago), que
+   capturan la dinámica temporal para los modelos (§5.2).
+
+**Ejemplo extremo a extremo (siguiendo el desempleo de 2020):**
+
+```
+1) EXTRACCIÓN (API → largo):
+   {"date":"2020","value":18.5}  →  fila:  anio=2020, codigo="desempleo",
+                                            valor=18.5, fuente="Banco Mundial"
+2) LIMPIEZA:
+   anio→2020 (entero), valor→18.5 (float), sin duplicados, ordenado.
+3) PIVOTEO (largo → ancho):
+   la fila pasa a ser la celda de la columna "desempleo" en la fila del año 2020.
+4) NULOS:
+   (no aplica aquí; 2020 tiene dato real. Si faltara, se interpolaría o rellenaría.)
+5) FEATURES:
+   desempleo_var2020  = (18.5 − 7.1)/7.1 × 100 ≈ +160 %   (variación vs 2019)
+   desempleo_lag1_2021 = 18.5                              (rezago para predecir 2021)
+   desempleo_mm3       = promedio de 2018-2019-2020
+```
+
+### 18.7 Resumen del flujo (qué entra y qué sale en cada etapa)
+
+| Etapa | Entra | Sale | Función |
+|-------|-------|------|---------|
+| **Extracción** | API del Banco Mundial + CSV Contraloría | DataFrame largo crudo `[anio, codigo, valor, fuente]` | `ingestar_todo()` |
+| **Limpieza** | DataFrame largo crudo | DataFrame largo limpio (tipos, sin duplicados, ordenado) | `limpiar()` |
+| **Pivoteo** | Largo limpio | Ancho (una columna por indicador) | `a_formato_ancho()` |
+| **Nulos** | Ancho con posibles huecos | Ancho sin nulos + reporte | `manejar_nulos()` |
+| **Features** | Ancho sin nulos | Ancho + variaciones, medias móviles y rezagos | `crear_features()` |
+
+El resultado final (`features`) es lo que consumen los modelos de Machine Learning,
+el chatbot y el dashboard.
 
 ---
 
