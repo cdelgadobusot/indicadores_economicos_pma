@@ -39,18 +39,24 @@ def limpiar(largo: pd.DataFrame) -> pd.DataFrame:
     -------
     pd.DataFrame con columnas ['anio', 'codigo', 'valor', 'fuente'] ya limpias.
     """
-    df = largo.copy()
+    df = largo.copy()  # copiamos para no mutar el DataFrame original recibido
 
+    # pd.to_numeric con errors="coerce": convierte a número y, si un valor NO se
+    # puede convertir (texto raro, vacío), lo vuelve NaN en vez de lanzar error.
+    # astype("Int64") es el entero "nullable" de pandas (admite NaN).
     df["anio"] = pd.to_numeric(df["anio"], errors="coerce").astype("Int64")
     df["valor"] = pd.to_numeric(df["valor"], errors="coerce")
 
+    # Una observación sin año no sirve para una serie de tiempo: la quitamos.
     df = df.dropna(subset=["anio"])
-    df["anio"] = df["anio"].astype(int)
+    df["anio"] = df["anio"].astype(int)  # ya sin NaN, pasamos a entero normal
 
     # Si por algún motivo llegara un (anio, codigo) repetido, conservamos el
-    # último valor observado (la fuente más reciente).
+    # último valor observado (la fuente más reciente). keep="last".
     df = df.drop_duplicates(subset=["anio", "codigo"], keep="last")
 
+    # Ordenar por (indicador, año) deja cada serie en orden cronológico, lo cual es
+    # IMPRESCINDIBLE para que rezagos y medias móviles se calculen bien después.
     df = df.sort_values(["codigo", "anio"]).reset_index(drop=True)
     return df
 
@@ -64,6 +70,11 @@ def a_formato_ancho(largo: pd.DataFrame) -> pd.DataFrame:
     Resultado: una fila por año y una columna por indicador. Las columnas se
     ordenan según el catálogo de `config` para mantener consistencia.
     """
+    # pivot_table "gira" la tabla:
+    #   index="anio"     -> cada año será UNA fila.
+    #   columns="codigo" -> cada valor único de la columna 'codigo'
+    #                       (pib_crecimiento, inflacion, ...) se vuelve UNA columna.
+    #   values="valor"   -> el contenido de cada celda es el número de 'valor'.
     ancho = largo.pivot_table(index="anio", columns="codigo", values="valor")
 
     # Reordena columnas en el orden del catálogo (solo las presentes).
@@ -108,12 +119,18 @@ def manejar_nulos(ancho: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     reporte["pct_nulos"] = (reporte["nulos"] / len(df) * 100).round(1)
     reporte = reporte[["codigo", "nombre", "nulos", "pct_nulos"]]
 
-    # Interpolación temporal + relleno de extremos.
+    # Interpolación temporal + relleno de extremos. Orden cronológico primero.
     df = df.sort_values("anio").reset_index(drop=True)
     df[columnas_indicadores] = (
         df[columnas_indicadores]
+        # interpolate(method="linear"): rellena un hueco INTERNO trazando una recta
+        # entre el valor anterior y el siguiente (estimación; ver DOC §14.8).
         .interpolate(method="linear", limit_direction="both")
+        # ffill (forward fill): copia el último valor conocido HACIA ADELANTE,
+        # para cubrir huecos al FINAL de la serie (último año sin dato).
         .ffill()
+        # bfill (backward fill): copia el siguiente valor conocido HACIA ATRÁS,
+        # para cubrir huecos al INICIO de la serie. (Ver DOC §14.9.)
         .bfill()
     )
     return df, reporte
@@ -139,12 +156,16 @@ def crear_features(ancho: pd.DataFrame) -> pd.DataFrame:
 
     nuevas: dict[str, pd.Series] = {}
     for col in columnas_indicadores:
-        # Variación interanual (%). fill_method=None evita el relleno implícito
-        # que pandas marca como obsoleto; ya no hay nulos tras la imputación.
+        # pct_change(): variación porcentual respecto a la fila anterior (año
+        # anterior). Mide aceleración/desaceleración. ×100 para dejarlo en %.
+        # fill_method=None evita un relleno implícito que pandas marca obsoleto.
         nuevas[f"{col}_var"] = df[col].pct_change(fill_method=None) * 100
-        # Media móvil de 3 años (min_periods=1 para no perder los primeros años).
+        # rolling(window=3).mean(): media móvil de 3 años (promedio del año actual
+        # y los 2 previos). Suaviza el ruido y deja ver la TENDENCIA.
+        # min_periods=1 calcula igual aunque aún no haya 3 años (primeros años).
         nuevas[f"{col}_mm3"] = df[col].rolling(window=3, min_periods=1).mean()
-        # Rezago de 1 año.
+        # shift(1): rezago (lag) de 1 año = el valor del año anterior. Es la
+        # "memoria" de la serie y un predictor clave para los modelos.
         nuevas[f"{col}_lag1"] = df[col].shift(1)
 
     df_features = pd.concat([df, pd.DataFrame(nuevas, index=df.index)], axis=1)

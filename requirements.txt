@@ -11,6 +11,11 @@ numpy>=1.24
 # --- Pipeline / ingesta (peticiones HTTP a la API del Banco Mundial) ---
 requests>=2.31
 
+# --- Web scraping de la Fuente 2 (Contraloría / deuda pública) ---
+# BeautifulSoup parsea el HTML. Se usa el parser 'html.parser' (incluido en
+# Python), por lo que lxml es opcional.
+beautifulsoup4>=4.12
+
 # --- Machine Learning ---
 scikit-learn>=1.3
 scipy>=1.10

@@ -199,9 +199,9 @@ Es una **lista de diccionarios**; cada uno describe un indicador con:
 | `wb_code` | Código de la API del Banco Mundial (`None` si es Fuente 2) | `"NY.GDP.MKTP.KD.ZG"` |
 | `descripcion` | Texto que usa el chatbot RAG | *"Tasa de crecimiento…"* |
 
-Se definen **9 indicadores**:
+Se definen **10 indicadores** (6 del Banco Mundial + 4 de la Contraloría/INEC/ACP):
 
-| Código | Indicador | Fuente | Unidad | Código Banco Mundial |
+| Código | Indicador | Fuente | Unidad | Código BM / Obtención |
 |--------|-----------|--------|--------|----------------------|
 | `pib_crecimiento` | PIB - Crecimiento anual | Banco Mundial | % | `NY.GDP.MKTP.KD.ZG` |
 | `pib_per_capita` | PIB per cápita | Banco Mundial | USD | `NY.GDP.PCAP.CD` |
@@ -209,9 +209,10 @@ Se definen **9 indicadores**:
 | `desempleo` | Tasa de desempleo | Banco Mundial | % | `SL.UEM.TOTL.ZS` |
 | `pib_usd` | PIB total | Banco Mundial | USD | `NY.GDP.MKTP.CD` |
 | `ied` | Inversión Extranjera Directa | Banco Mundial | USD | `BX.KLT.DINV.CD.WD` |
-| `canal_transitos` | Tránsitos por el Canal | Contraloría/ACP | buques/año | *(CSV)* |
-| `canal_ingresos` | Ingresos del Canal | Contraloría/ACP | millones USD | *(CSV)* |
-| `imae` | Índice Mensual de Actividad Económica | Contraloría/INEC | índice 2007=100 | *(CSV)* |
+| `canal_transitos` | Tránsitos por el Canal | Contraloría/ACP | buques/año | CSV local |
+| `canal_ingresos` | Ingresos del Canal | Contraloría/ACP | millones USD | CSV local |
+| `imae` | Índice Mensual de Actividad Económica | Contraloría/INEC | índice 2007=100 | CSV local |
+| `deuda_pib` | Deuda pública (% del PIB) | Contraloría/Web | % del PIB | **Web scraping** |
 
 Se derivan vistas auxiliares: `CODIGOS_INDICADORES`, `INDICADORES_BANCO_MUNDIAL`,
 `INDICADORES_CONTRALORIA` y `META_POR_CODIGO` (diccionario `código → metadatos`),
@@ -272,19 +273,26 @@ representativas de Panamá 2000–2024. Devuelve un DataFrame en **formato largo
 > reproducible** aunque no haya internet o la API esté caída. Cuando sí hay
 > conexión, los datos se descargan **en vivo** (mensaje `[ok] … en vivo`).
 
-#### Fuente 2 — Contraloría / INEC / Canal (archivo CSV)
+#### Fuente 2 — Contraloría / INEC / Canal (CSV + WEB SCRAPING)
 
-- **`generar_csv_contraloria()`** crea `data/raw/contraloria_panama.csv` a partir
-  de `_DATOS_CONTRALORIA` (cifras representativas reales de tránsitos e ingresos
-  del Canal e IMAE). Simula la descarga manual desde el portal de la Contraloría.
-- **`cargar_contraloria()`** lee ese CSV (formato **ancho**: una columna por
-  indicador) y lo convierte a **formato largo** con `melt`, etiquetando la fuente.
+La Fuente 2 usa **tres mecanismos** en orden de preferencia (ver §18.4 para el
+detalle del scraping y el porqué):
 
-> **Honestidad metodológica.** El CSV de la Fuente 2 contiene valores
-> **representativos basados en cifras públicas reales** de la Contraloría/ACP, no
-> una descarga byte a byte del portal. Esto se documenta explícitamente para no
-> presentar datos sintéticos como oficiales. La Fuente 1 (Banco Mundial) sí es
-> una descarga real en vivo cuando hay internet.
+- **`_descargar_contraloria_url()`** — descarga un CSV oficial en vivo si se define
+  `CONTRALORIA_URL`.
+- **`scrapear_economia_panama()`** — **web scraping con BeautifulSoup** que extrae
+  la **deuda pública (% del PIB)** en vivo de una tabla HTML pública.
+- **`generar_csv_contraloria()`** — crea el CSV local representativo (tránsitos e
+  ingresos del Canal, IMAE, deuda) como respaldo offline.
+- **`cargar_contraloria()`** orquesta los tres y, con `_contraloria_a_largo()`,
+  convierte de formato **ancho** a **largo** con `melt`, etiquetando la fuente.
+
+> **Honestidad metodológica.** La deuda pública (`deuda_pib`) se obtiene por
+> **scraping real** de una tabla pública. Los demás indicadores de la Fuente 2
+> (Canal, IMAE) son **representativos basados en cifras públicas reales** de la
+> Contraloría/ACP (no una descarga byte a byte del portal), porque esas series no
+> están en una tabla HTML estable. La Fuente 1 (Banco Mundial) es descarga real en
+> vivo vía API. Todo se documenta para no presentar datos como algo que no son.
 
 #### Orquestador
 
@@ -292,7 +300,7 @@ representativas de Panamá 2000–2024. Devuelve un DataFrame en **formato largo
 `pd.concat` y devuelve el DataFrame combinado en formato largo. Es la función que
 usan el notebook y el dashboard.
 
-**Resultado típico:** 225 observaciones = 9 indicadores × 25 años.
+**Resultado típico:** ≈256 observaciones = 10 indicadores × 26 años (2000–2025).
 
 ### 5.2 Preprocesamiento (`preprocesamiento.py`)
 
@@ -354,8 +362,8 @@ Encadena las 4 etapas y devuelve un **diccionario** con 5 datasets:
 | Llave | Contenido |
 |-------|-----------|
 | `largo` | DataFrame largo limpio |
-| `ancho` | Una columna por indicador, sin nulos (25 años × 9 indicadores) |
-| `features` | `ancho` + las 27 variables derivadas (37 columnas: `anio` + 9 indicadores + 27 derivadas) |
+| `ancho` | Una columna por indicador, sin nulos (26 años × 10 indicadores) |
+| `features` | `ancho` + las variables derivadas (41 columnas: `anio` + 10 indicadores + 30 derivadas) |
 | `reporte_nulos` | Nulos por indicador antes de imputar |
 | `calidad` | Cobertura por indicador |
 
@@ -655,7 +663,7 @@ indicadores y la Contraloría/INEC/ACP aporta 3.
 **Celda 4 — Preprocesamiento.** Llama `preprocesar_todo()`, desempaqueta los 5
 datasets (`largo`, `ancho`, `features`, `reporte_nulos`, `calidad`). Imprime las
 formas y muestra `df_ancho.tail(6)` (los años recientes con todos los indicadores
-en columnas). **Salida:** 25 años × 9 indicadores; 37 columnas con features.
+en columnas). **Salida:** 26 años × 10 indicadores; 41 columnas con features.
 
 **Celda 5 — Calidad y nulos.** Muestra la tabla de `calidad` (cobertura por
 indicador) y el `reporte_nulos`. **Salida:** dos tablas que documentan la
@@ -806,8 +814,8 @@ anio=2020,  codigo="desempleo",  valor=18.5,  fuente="Banco Mundial"
 ```
 
 se lee así: *"en el año 2020, el indicador 'tasa de desempleo' valía 18.5, según
-el Banco Mundial"*. Aunque haya 9 indicadores y 26 años mezclados en la misma
-tabla (≈231 filas), cada fila es **autodescriptiva**: el par (`anio`, `valor`)
+el Banco Mundial"*. Aunque haya 10 indicadores y 26 años mezclados en la misma
+tabla (≈256 filas), cada fila es **autodescriptiva**: el par (`anio`, `valor`)
 siempre viene acompañado de su `codigo`. Para quedarte solo con un indicador
 basta con filtrar: `df[df["codigo"] == "desempleo"]`.
 
@@ -881,10 +889,15 @@ export CONTRALORIA_URL="https://.../datos_contraloria.csv"
 ```
 
 El CSV remoto debe tener una columna `anio` y una columna por indicador
-(`canal_transitos`, `canal_ingresos`, `imae`). Si algún día consigues un enlace
-oficial, el proyecto lo usará automáticamente y esos datos dejarán de ser
-representativos. (Una alternativa es hacer *web scraping* del portal, pero es más
-frágil y por eso no es la opción por defecto.)
+(`canal_transitos`, `canal_ingresos`, `imae`, `deuda_pib`). Si algún día consigues
+un enlace oficial, el proyecto lo usará automáticamente y esos datos dejarán de ser
+representativos.
+
+**Además ya se implementó web scraping** para la Fuente 2: el indicador
+`deuda_pib` (deuda pública % del PIB) se obtiene **en vivo** raspando una tabla
+HTML pública con **BeautifulSoup**, con respaldo local si falla. El detalle
+completo —y la explicación de **por qué la Fuente 1 no necesita scraping y la
+Fuente 2 sí**— está en la §18.4.
 
 ### 14.4 ¿A qué 2 funciones llama exactamente `ingestar_todo()`?
 
@@ -1049,6 +1062,13 @@ personalizadas, sin emojis, con tarjetas, contrastes y animaciones. Detalle en l
 Se añadió la carpeta `scripts/` (`instalar.sh`, `dashboard.sh`, `notebook.sh`,
 `chatbot.sh`, `preparar_ollama.sh`) y la guía
 [`docs/GUIA_RAPIDA.md`](GUIA_RAPIDA.md) para correr todo desde la terminal.
+
+### 15.6 Web scraping con BeautifulSoup para la Fuente 2
+Se añadió el indicador **`deuda_pib`** (deuda pública % del PIB), que se obtiene por
+**web scraping** (`scrapear_economia_panama()` en `ingesta.py`) de una tabla HTML
+pública, con respaldo local si falla. Con esto el proyecto ya tiene **10
+indicadores** y demuestra el scraping como técnica de ingesta. El porqué de usar
+scraping solo en la Fuente 2 está en la §18.4.
 
 ---
 
@@ -1238,15 +1258,16 @@ Con esos criterios elegimos:
 | Fuente | Tipo | Mecanismo | Mirada que aporta |
 |--------|------|-----------|-------------------|
 | **Banco Mundial** | Organismo internacional | **API REST** (en vivo) | Macroeconomía comparable internacionalmente (PIB, inflación, desempleo, IED…) |
-| **Contraloría / INEC / ACP** | Fuentes oficiales nacionales | **Archivo CSV** (en vivo o local) | Indicadores propios de Panamá que NO están en el Banco Mundial (Canal de Panamá, IMAE) |
+| **Contraloría / INEC / ACP** | Fuentes oficiales nacionales | **Web scraping (BeautifulSoup)** + CSV (en vivo o local) | Indicadores propios de Panamá que NO están en el Banco Mundial (Canal, IMAE, deuda pública) |
 
 **Por qué juntas y no una sola:** el Banco Mundial da la "foto macro" comparable
 con otros países, pero **no** tiene los indicadores específicos del **Canal de
 Panamá** ni el **IMAE**, que son centrales para entender la economía panameña. La
 Contraloría/INEC/ACP los aporta. Juntas dan una visión **macro + nacional/sectorial**
-que ninguna por sí sola lograría. Además, usar **una API y un CSV** demuestra dos
-mecanismos de ingesta distintos (cumple el requisito de forma significativa, no
-solo formal).
+que ninguna por sí sola lograría. Además, usar **una API REST (Fuente 1) y web
+scraping + CSV (Fuente 2)** demuestra varios mecanismos de ingesta distintos
+(cumple el requisito de forma significativa, no solo formal). El porqué de usar
+scraping solo en la Fuente 2 está en la §18.8.
 
 ### 18.2 Fuente 1 — Banco Mundial (World Bank Open Data)
 
@@ -1302,30 +1323,63 @@ económicamente decisivos para el país.
 
 **Cómo funciona (mecanismo técnico) y por qué es distinto al Banco Mundial.** A
 diferencia del Banco Mundial, **estas instituciones no exponen una API REST
-estable**: su información vive en portales, tablas HTML y PDFs. Por eso la tratamos
-como un **archivo CSV**. El pipeline (`cargar_contraloria()`) hace lo siguiente:
+estable**: su información vive en portales, tablas HTML y PDFs. Por eso usamos
+**tres mecanismos** en orden de preferencia (`cargar_contraloria()`):
 
-1. Si defines `CONTRALORIA_URL`, **descarga el CSV en tiempo real** desde esa URL
-   (datos oficiales actualizados).
-2. Si no, usa un **CSV local** con cifras **representativas basadas en datos
-   públicos reales** como respaldo, para que el proyecto sea reproducible siempre
-   (ver §14.3). Esto se documenta con honestidad: la Fuente 2 local es
-   representativa, no una descarga byte a byte del portal.
+1. **CSV oficial en vivo** (si defines `CONTRALORIA_URL`): descarga directa.
+2. **Web scraping con BeautifulSoup** (`scrapear_economia_panama()`): para la
+   **deuda pública (% del PIB)**, que se extrae en vivo de una tabla HTML pública.
+3. **CSV local representativo** como respaldo (offline), con cifras basadas en
+   datos públicos reales. Honestamente: el respaldo es representativo, no una
+   descarga byte a byte del portal.
 
-**Qué buscamos / qué extraemos exactamente.** Extraemos **3** indicadores que el
+**Qué buscamos / qué extraemos exactamente.** Extraemos **4** indicadores que el
 Banco Mundial no ofrece y que son clave para Panamá:
 
-| Código interno | Indicador | Origen | Qué mide | **Por qué exactamente este** |
-|----------------|-----------|--------|----------|------------------------------|
-| `canal_transitos` | Tránsitos por el Canal | ACP | Buques de alto calado por año | El Canal es **columna vertebral** de la economía; los tránsitos son un termómetro del **comercio mundial** y muestran el impacto de la sequía 2023-2024. |
-| `canal_ingresos` | Ingresos del Canal | ACP | Ingresos por peajes (millones USD) | Aporte **fiscal directo** del Canal al país. |
-| `imae` | Índice Mensual de Actividad Económica | Contraloría/INEC | Actividad económica, base 2007 = 100 | Indicador **adelantado** y de alta frecuencia del ritmo de la economía panameña (propio de la Contraloría). |
+| Código interno | Indicador | Obtención | Qué mide | **Por qué exactamente este** |
+|----------------|-----------|-----------|----------|------------------------------|
+| `canal_transitos` | Tránsitos por el Canal | CSV local | Buques de alto calado por año | El Canal es **columna vertebral** de la economía; termómetro del **comercio mundial**; muestra la sequía 2023-2024. |
+| `canal_ingresos` | Ingresos del Canal | CSV local | Ingresos por peajes (millones USD) | Aporte **fiscal directo** del Canal al país. |
+| `imae` | Índice Mensual de Actividad Económica | CSV local | Actividad económica, base 2007 = 100 | Indicador **adelantado** y de alta frecuencia, propio de la Contraloría. |
+| `deuda_pib` | Deuda pública (% del PIB) | **Web scraping** | Endeudamiento del Estado | Indicador **fiscal** que no está en el Banco Mundial; se obtiene por scraping (ver §18.4). Subió a ~66 % en 2020 por la pandemia. |
 
-**Qué muestran (en Panamá).** Reflejan la dimensión **nacional/sectorial**: la
-importancia del Canal como fuente de divisas e ingresos, y el pulso mensual de la
-actividad económica que el PIB anual no capta.
+**Qué muestran (en Panamá).** Reflejan la dimensión **nacional/sectorial y fiscal**:
+la importancia del Canal como fuente de divisas e ingresos, el pulso mensual de la
+actividad económica, y la **salud de las finanzas públicas** (deuda).
 
-### 18.4 Extracción (ingesta) paso a paso
+### 18.4 Web scraping con BeautifulSoup: por qué en la Fuente 2 y no en la Fuente 1
+
+Esta es una decisión de diseño importante: **a la Fuente 1 NO le hicimos scraping,
+a la Fuente 2 SÍ.** La razón es el **mecanismo de acceso de cada fuente**.
+
+| | Fuente 1 (Banco Mundial) | Fuente 2 (Contraloría / datos fiscales) |
+|---|--------------------------|------------------------------------------|
+| ¿Tiene API? | **Sí**, una API REST pública que devuelve **JSON estructurado** | **No** hay API estable; los datos están en **páginas HTML / PDF** |
+| ¿Cómo se obtiene? | Una petición HTTP y se leen los campos `date`/`value` | Hay que **descargar el HTML y extraer** los datos de la tabla |
+| ¿Hace falta scraping? | **No** — la API ya entrega los datos limpios y etiquetados | **Sí** — el scraping es la forma de automatizar la extracción |
+
+**La regla general:** si una fuente ofrece una **API** (o un CSV/JSON descargable),
+úsala — es lo más limpio, estable y rápido. **Solo se recurre al web scraping
+cuando NO hay API** y los datos solo existen dentro de páginas web. Hacer scraping
+cuando ya hay API sería trabajo de más y más frágil (el scraping se rompe si cambia
+el diseño de la página).
+
+**Cómo funciona nuestro scraper** (`scrapear_economia_panama()` en `ingesta.py`):
+
+1. `requests.get(url)` descarga el **HTML** de la página (con una cabecera
+   *User-Agent* para que el sitio no rechace la petición).
+2. `BeautifulSoup(html, "html.parser")` convierte ese HTML en un **árbol
+   navegable**. Usamos `html.parser`, que viene **incluido en Python** (no requiere
+   instalar `lxml`).
+3. `sopa.find("table", class_="wikitable")` localiza la **tabla**; buscamos la
+   columna cuyo encabezado contiene "debt"/"deuda".
+4. Recorremos las filas (`<tr>`), tomamos el **año** (primera celda) y el valor de
+   la **deuda**, y **limpiamos** el texto (`"66.3%"` → `66.3`; `"n/a"` → nulo).
+
+**Robustez:** si no hay internet o la página cambió, el scraper devuelve `None` y el
+pipeline usa el **valor de respaldo** de `deuda_pib`. Así nunca se rompe.
+
+### 18.5 Extracción (ingesta) paso a paso
 
 La extracción la orquesta `ingestar_todo()`, que llama a las dos funciones de
 fuente y une sus resultados (§14.4). El objetivo de esta etapa es traer los datos
@@ -1334,15 +1388,15 @@ crudos y dejarlos **todos con la misma estructura** (formato largo de 4 columnas
 
 ```
 descargar_banco_mundial()   →  [anio, codigo, valor, fuente]  (6 indicadores)
-cargar_contraloria()        →  [anio, codigo, valor, fuente]  (3 indicadores)
-                 └── pd.concat ──→  un solo DataFrame largo (≈231 filas)
+cargar_contraloria()        →  [anio, codigo, valor, fuente]  (4 indicadores; deuda_pib por scraping)
+                 └── pd.concat ──→  un solo DataFrame largo (≈256 filas)
 ```
 
 **Robustez:** si la API del Banco Mundial no responde, se usan datos de respaldo
 embebidos; si la URL de la Contraloría falla o no está definida, se usa el CSV
 local. Por eso la extracción **nunca rompe el pipeline**.
 
-### 18.5 Limpieza paso a paso (`limpiar`)
+### 18.6 Limpieza paso a paso (`limpiar`)
 
 Sobre el DataFrame largo crudo se aplican, en orden:
 
@@ -1354,7 +1408,7 @@ Sobre el DataFrame largo crudo se aplican, en orden:
 | Quitar duplicados | `drop_duplicates(["anio","codigo"], keep="last")` | Evita que un mismo (año, indicador) aparezca dos veces; conserva el más reciente. |
 | Ordenar | `sort_values(["codigo","anio"])` | Deja la serie de cada indicador en orden cronológico (necesario para rezagos y medias móviles). |
 
-### 18.6 Preprocesamiento / transformación paso a paso
+### 18.7 Preprocesamiento / transformación paso a paso
 
 Convierte los datos limpios en datasets listos para modelar:
 
@@ -1385,11 +1439,11 @@ Convierte los datos limpios en datasets listos para modelar:
    desempleo_mm3       = promedio de 2018-2019-2020
 ```
 
-### 18.7 Resumen del flujo (qué entra y qué sale en cada etapa)
+### 18.8 Resumen del flujo (qué entra y qué sale en cada etapa)
 
 | Etapa | Entra | Sale | Función |
 |-------|-------|------|---------|
-| **Extracción** | API del Banco Mundial + CSV Contraloría | DataFrame largo crudo `[anio, codigo, valor, fuente]` | `ingestar_todo()` |
+| **Extracción** | API Banco Mundial + web scraping + CSV Contraloría | DataFrame largo crudo `[anio, codigo, valor, fuente]` | `ingestar_todo()` |
 | **Limpieza** | DataFrame largo crudo | DataFrame largo limpio (tipos, sin duplicados, ordenado) | `limpiar()` |
 | **Pivoteo** | Largo limpio | Ancho (una columna por indicador) | `a_formato_ancho()` |
 | **Nulos** | Ancho con posibles huecos | Ancho sin nulos + reporte | `manejar_nulos()` |

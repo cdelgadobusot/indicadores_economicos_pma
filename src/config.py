@@ -198,6 +198,21 @@ INDICADORES: list[dict] = [
             "de la economía panameña, con base 2007 = 100."
         ),
     },
+    {
+        # Este indicador se obtiene por WEB SCRAPING (BeautifulSoup) de una página
+        # pública (no hay API). Es fiscal y complementa al Banco Mundial.
+        "codigo": "deuda_pib",
+        "nombre": "Deuda pública (% del PIB)",
+        "fuente": "Contraloría / Web (scraping)",
+        "unidad": "% del PIB",
+        "wb_code": None,
+        "descripcion": (
+            "Deuda del gobierno como porcentaje del PIB. Mide cuán endeudado "
+            "está el Estado panameño. Subió con fuerza en 2020 por la pandemia "
+            "(más gasto y caída del PIB). Se obtiene por web scraping de datos "
+            "públicos, ya que la Contraloría no expone una API."
+        ),
+    },
 ]
 
 # Vistas auxiliares derivadas del catálogo, para acceso rápido en el resto del
@@ -230,12 +245,20 @@ WB_FORMATO: str = "json"
 WB_PER_PAGE: int = 500        # Suficiente para traer todos los años en una página
 WB_TIMEOUT: int = 20          # Segundos antes de abortar una petición HTTP
 
-# URL para descargar la Fuente 2 (Contraloría/INEC/ACP) EN TIEMPO REAL. Si está
-# definida (por variable de entorno CONTRALORIA_URL), el pipeline intenta bajar un
-# CSV en vivo desde ahí; si está vacía o la descarga falla, usa el CSV local
-# representativo como respaldo. El CSV remoto debe tener una columna 'anio' y una
-# columna por indicador (canal_transitos, canal_ingresos, imae).
+# URL para descargar la Fuente 2 (Contraloría/INEC/ACP) EN TIEMPO REAL como CSV.
+# Si está definida (por variable de entorno CONTRALORIA_URL), el pipeline intenta
+# bajar un CSV en vivo desde ahí; si está vacía o la descarga falla, usa el CSV
+# local representativo como respaldo. El CSV remoto debe tener una columna 'anio' y
+# una columna por indicador (canal_transitos, canal_ingresos, imae, deuda_pib).
 CONTRALORIA_URL: str = os.environ.get("CONTRALORIA_URL", "")
+
+# URL para el WEB SCRAPING (BeautifulSoup) de la Fuente 2. A diferencia del Banco
+# Mundial, los datos fiscales de Panamá no tienen API: viven en páginas web. Esta
+# página pública contiene una tabla anual con la deuda pública (% del PIB), que el
+# pipeline raspa (scrapea) en vivo. Si el scraping falla, se usa el respaldo local.
+CONTRALORIA_SCRAPE_URL: str = os.environ.get(
+    "CONTRALORIA_SCRAPE_URL", "https://en.wikipedia.org/wiki/Economy_of_Panama"
+)
 
 
 # ---------------------------------------------------------------------------

@@ -28,8 +28,9 @@ datos, modelos predictivos, un dashboard y un chatbot.
 
 ## ✨ Características
 
-- 🔄 **Pipeline de datos** con ingesta de **2 fuentes diferentes**
-  (API del Banco Mundial + CSV de la Contraloría/INEC/ACP).
+- 🔄 **Pipeline de datos** con ingesta de **2 fuentes diferentes** mediante varias
+  técnicas: **API REST** (Banco Mundial) + **web scraping con BeautifulSoup** y CSV
+  (Contraloría/INEC/ACP).
 - 🧹 **Preprocesamiento**: limpieza, manejo de nulos, pivoteo y *feature engineering*.
 - 🤖 **Machine Learning**: pronóstico (regresión) de **2 indicadores** + **clustering**
   de regímenes económicos (KMeans).
@@ -120,13 +121,13 @@ export ANTHROPIC_API_KEY="tu-clave-de-anthropic"   # Windows: set ANTHROPIC_API_
 | Fuente | Mecanismo | Indicadores |
 |--------|-----------|-------------|
 | **Banco Mundial** ([data.worldbank.org](https://data.worldbank.org)) | API REST (en vivo) | PIB, crecimiento, inflación, desempleo, IED, PIB per cápita |
-| **Contraloría / INEC / ACP** ([contraloria.gob.pa](https://www.contraloria.gob.pa/inec/)) | CSV (en vivo si se define `CONTRALORIA_URL`, o local) | Tránsitos e ingresos del Canal de Panamá, IMAE |
+| **Contraloría / INEC / ACP** ([contraloria.gob.pa](https://www.contraloria.gob.pa/inec/)) | **Web scraping (BeautifulSoup)** + CSV (en vivo/local) | Tránsitos e ingresos del Canal, IMAE, **deuda pública (% PIB, por scraping)** |
 
-> El Banco Mundial se descarga **en vivo**, con rango de años **dinámico** (de 2000
-> hasta el año actual según disponibilidad). La fuente Contraloría/INEC/ACP se
-> descarga en tiempo real si configuras `CONTRALORIA_URL`; si no, usa un CSV local
-> con cifras representativas basadas en datos públicos reales como respaldo. Detalle
-> en [`docs/DOCUMENTACION.md`](docs/DOCUMENTACION.md) (§14.2 y §14.3).
+> El Banco Mundial se descarga **en vivo** por API, con rango de años **dinámico**
+> (2000 hasta el año actual). La Fuente 2 usa **web scraping con BeautifulSoup** para
+> la deuda pública (la Contraloría no tiene API), con CSV local de respaldo. ¿Por
+> qué scraping en la Fuente 2 y no en la 1? Porque la 1 sí tiene API. Detalle en
+> [`docs/DOCUMENTACION.md`](docs/DOCUMENTACION.md) (§18.4).
 
 ## 🤖 Modelos de Machine Learning
 
@@ -138,7 +139,7 @@ export ANTHROPIC_API_KEY="tu-clave-de-anthropic"   # Windows: set ANTHROPIC_API_
 ## 🧮 Tecnologías
 
 `Python` · `pandas` · `numpy` · `scikit-learn` · `matplotlib` · `plotly` ·
-`Streamlit` · `requests` · `Anthropic Claude API`
+`Streamlit` · `requests` · `BeautifulSoup` · `Ollama` · `Anthropic Claude API`
 
 ## 📋 Mapeo con la rúbrica
 
